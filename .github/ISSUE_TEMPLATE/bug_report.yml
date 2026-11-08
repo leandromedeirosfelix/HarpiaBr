@@ -1,0 +1,81 @@
+name: Bug / Bug report
+description: Algo não funciona como deveria / Something does not work as it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Não anexe** arquivos do jogo, caches `*.bin`, `image.bin`, saves nem chaves. Leia o log antes de colar: ele pode ter nomes de pastas do seu PC.
+        **Do not attach** game files, `*.bin` caches, `image.bin`, saves or keys. Read the log before pasting.
+  - type: input
+    id: gpu
+    attributes:
+      label: Placa de vídeo / Graphics card
+      placeholder: NVIDIA GeForce RTX 5080
+    validations:
+      required: true
+  - type: input
+    id: driver
+    attributes:
+      label: Versão do driver / Driver version
+      placeholder: "ex.: 581.xx"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Versão do Windows / Windows version
+      placeholder: Windows 11 24H2 (build 26100)
+    validations:
+      required: true
+  - type: input
+    id: harpia
+    attributes:
+      label: Versão da Harpia (commit ou data) / Harpia version
+      placeholder: bc23aab
+    validations:
+      required: true
+  - type: textarea
+    id: ini
+    attributes:
+      label: Conteúdo de harpia_options.ini / Contents of harpia_options.ini
+      render: ini
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Trecho do harpia_log.txt / harpia_log.txt excerpt
+      description: As últimas ~100 linhas e as linhas com `error` ou `device lost`. Não o arquivo inteiro. / The last ~100 lines and any `error` or `device lost` lines. Not the whole file.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Passos para reproduzir / Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: O que esperava e o que aconteceu / Expected and actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: shots
+    attributes:
+      label: Capturas de tela ou vídeo / Screenshots or video
+      description: Arraste imagens aqui. Se mostrar o jogo, prefira um recorte pequeno do problema. / Drag images here.
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Confirmações / Confirmations
+      options:
+        - label: Tenho uma cópia legítima do jogo e não estou pedindo ajuda com pirataria / I own a legitimate copy and am not asking for help with piracy
+          required: true
+        - label: Não anexei arquivos do jogo, caches, saves nem chaves / I attached no game files, caches, saves or keys
+          required: true

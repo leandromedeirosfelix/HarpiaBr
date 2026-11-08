@@ -1,0 +1,70 @@
+# ---- never commit the game or anything made from it ----
+# (decompressed modules, the loaded image, lifted C, test builds, romfs/exefs copies, dumps, keys)
+work/
+gen/
+image/
+exefs/
+romfs/
+*.bin
+*.keys
+*.nso
+*.nca
+*.nsp
+*.xci
+gamefile/
+*.nup
+*.nsz
+*.xcz
+
+# ---- build output and caches ----
+build/
+__pycache__/
+*.pyc
+*.o
+*.obj
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.sha1
+*.log
+
+# ---- Linux builds ----
+build-linux/
+*.so
+
+# ---- .NET / Builder output and IDE state ----
+bin/
+obj/
+.vs/
+*.user
+*.res
+*.zip
+
+# ---- secrets, saves, local config ----
+.env
+.env.*
+*.pem
+*.pfx
+*.p12
+*.key
+prod.keys
+title.keys
+user/
+saves/
+*.sav
+harpia_options.ini
+harpia_env.txt
+
+# ---- test runs and captures ----
+runs/
+shots/
+*.dmp
+
+# ---- local tool state (Claude plugins and sessions) ----
+.claude-flow/
+.claude/
+.swarm/
+.hive-mind/

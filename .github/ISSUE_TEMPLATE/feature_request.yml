@@ -1,0 +1,28 @@
+name: Sugestão / Feature request
+description: Uma ideia para a Harpia / An idea for Harpia
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema ou vontade? / What problem or wish?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Como imagina que seria? / How would it look?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas ou projetos parecidos / Alternatives or similar projects
+      description: Se vem de outro projeto aberto, cite o link e a licença. / If it comes from another open project, give the link and licence.
+  - type: checkboxes
+    id: legal
+    attributes:
+      label: Confirmação / Confirmation
+      options:
+        - label: Isto não envolve distribuir arquivos do jogo, chaves ou binários proprietários / This does not involve distributing game files, keys or proprietary binaries
+          required: true

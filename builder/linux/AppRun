@@ -1,0 +1,20 @@
+#!/bin/sh
+# The Harpia AppImage: the builder window (builder/linux/harpia_builder.py) with everything it builds the game with -
+# Python and the tools, clang and lld, a glibc 2.35 sysroot, FFmpeg, SDL2 and the Vulkan back end, built already.
+#   Harpia.AppImage                  the window (and Play, once a game is built)
+#   Harpia.AppImage --play           the game built last time
+#   Harpia.AppImage --cli <args>     nx2/make_game.py itself, e.g. --cli --nup game.nup --out ~/Games/Harpia
+HERE="$(dirname "$(readlink -f "$0")")"
+LIB="$HERE/usr/lib/harpia"
+export HARPIA_TOOLS="$HERE/usr/share/harpia"
+export EMSDK="$LIB/emsdk"
+export HARPIA_SYSROOT="$LIB/sysroot"
+export HARPIA_FFMPEG="$LIB/ffmpeg"
+export HARPIA_VK_PREBUILT="$LIB/harpia_vk.so"
+export HARPIA_SDL2="$LIB/libSDL2-2.0.so.0"
+PY="$HERE/usr/python/bin/python3"
+if [ "$1" = "--cli" ]; then
+    shift
+    exec "$PY" -I "$HARPIA_TOOLS/nx2/make_game.py" "$@"
+fi
+exec "$PY" -I "$HARPIA_TOOLS/builder/linux/harpia_builder.py" "$@"
