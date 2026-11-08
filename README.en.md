@@ -212,9 +212,8 @@ Harpia is free software under the **[GNU General Public License, version 3 or la
 Harpia is and will stay **free**. If you want to help keep development going, you can make a voluntary donation by **PIX** (Brazil's instant payment system):
 
 <p align="center">
-  <img src="docs/assets/pix-placeholder.png" alt="PIX QR code coming soon" width="260">
+  <img src="docs/assets/pix-qrcode.png" alt="PIX QR code" width="260">
 </p>
 
-<!-- PIX: when the QR code image arrives, save it as docs/assets/pix-qrcode.png and change the src above. Optional: the "copy and paste" key as text, below. -->
 
 > Donations are voluntary, **do not buy access, the game or priority support**, and have nothing to do with Nintendo. Please also consider supporting the projects that make Harpia possible (links in [CREDITS.en.md](CREDITS.en.md)).

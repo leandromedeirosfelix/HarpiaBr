@@ -212,9 +212,8 @@ Harpia é software livre sob a **[GNU General Public License, versão 3 ou poste
 A Harpia é e continuará **gratuita**. Se quiser ajudar a manter o desenvolvimento, pode fazer uma doação voluntária por **PIX**:
 
 <p align="center">
-  <img src="docs/assets/pix-placeholder.png" alt="QR Code PIX em breve" width="260">
+  <img src="docs/assets/pix-qrcode.png" alt="QR Code PIX" width="260">
 </p>
 
-<!-- PIX: quando a imagem do QR Code chegar, salve como docs/assets/pix-qrcode.png e troque o src acima. Opcional: a chave "copia e cola" em texto, abaixo. -->
 
 > Doações são voluntárias, **não compram acesso, o jogo nem suporte prioritário**, e não têm relação com a Nintendo. Considere também apoiar os projetos que tornam a Harpia possível (links em [CREDITS.md](CREDITS.md)).
