@@ -25,6 +25,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "vk_texture.h"
@@ -1337,7 +1338,9 @@ Texture* create(const Key& key, const nvn_tex* t, VkFormat vf, bool astc, int bw
         // only from 64 MB)
         static const uint64_t low = (uint64_t)(getenv("RX_VK_ASTC_BC_MB") ? atoi(getenv("RX_VK_ASTC_BC_MB"))
                                                : opts.tex_quality ? 8 : 2) << 20;   // (local: High re-encodes fewer)
-        const uint64_t min_bytes = bw * bh >= 36 ? low : 64ull << 20;
+        // (local: Ultra (2) re-encodes none, unless RX_VK_ASTC_BC_MB asks)
+        static const bool ultra = opts.tex_quality >= 2 && !getenv("RX_VK_ASTC_BC_MB");
+        const uint64_t min_bytes = ultra ? UINT64_MAX : bw * bh >= 36 ? low : 64ull << 20;
         uint64_t px = 0;
         for (uint32_t l = 0; l < x.levels; l++)
             px += (uint64_t)std::max(1u, x.width >> l) * std::max(1u, x.height >> l);
@@ -1541,6 +1544,10 @@ unsigned view_layer(const nvn_view* v) {
     return v && v->set_layers ? v->min_layer : 0;
 }
 
+// (local) the storage of rendered textures the budget evicted (their content was only in the image): finalized or not,
+// unused for how many presents. A texture made again over one and sampled has lost what the GPU drew (logged below)
+static std::unordered_map<uint64_t, std::pair<bool, uint64_t>> lost_rendered;
+
 Texture* texture_get(const nvn_tex* t, bool for_sampling) {
     PROF(PROF_TEXGET);
     if (!t || !t->gpu || t->d.target == NVN_TEXTURE_TARGET_BUFFER) return nullptr;
@@ -1574,6 +1581,15 @@ Texture* texture_get(const nvn_tex* t, bool for_sampling) {
     if (it == textures.end()) {
         tex = create(k, t, fi.format, fi.astc, bw, bh, bpb);
         if (!tex) return nullptr;
+        if (auto l = lost_rendered.find(tex->gpu); l != lost_rendered.end()) {
+            static int lost_logged;
+            if (for_sampling && lost_logged++ < 60)
+                logf("vk: texture %#llx %ux%u NVN %#x made again and sampled over storage a rendered texture held: the "
+                     "budget evicted it (%s, unused for %llu presents), what the GPU drew is lost",
+                     (unsigned long long)tex->gpu, t->d.width, t->d.height, t->d.format,
+                     l->second.first ? "finalized" : "live", (unsigned long long)l->second.second);
+            lost_rendered.erase(l);
+        }
         static const int64_t log_from = getenv("RX_VK_LOG_MADE") ? atoll(getenv("RX_VK_LOG_MADE")) : -1;
         static int made_logged;
         if (log_from >= 0 && (int64_t)frame_no >= log_from && made_logged++ < 300) {
@@ -2571,7 +2587,9 @@ void texture_frame(uint64_t completed) {
         const uint64_t over = pressure - allowed / 10 * 9;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
     }
-    if (known && !by_blocks && used > allowed / 100 * 97) {
+    // (local: not while VMA's blocks hold at least the excess free: evicting from fragmented blocks does not lower what
+    // the driver counts, so each squeeze took the budget lower again, down to 4.2 GB with 7.5 GB free in the blocks)
+    if (known && !by_blocks && used > allowed / 100 * 97 && block_free < used - allowed / 100 * 97) {
         const uint64_t over = used - allowed / 100 * 97;
         budget = std::min(budget, total_bytes > over ? total_bytes - over : 0);
     }
@@ -2679,6 +2697,9 @@ void texture_frame(uint64_t completed) {
             for (auto o = a; o != e && !overwritten; ++o)
                 overwritten = o->second != tex && o->second->last_written > tex->last_frame;
         }
+        // (local, measured: keeping a finalized one like a live one held VRAM at 97% of the driver's allowance with
+        // 7.5 GB free in VMA's blocks, the budget fell to 4.2 GB and its evictions lost more drawn content, 10 against
+        // 1 in the same walk: left as it was)
         if (!overwritten && tex->gpu_written && !tex->released && !evict_rendered && frame_no - last < keep_rendered) continue;
         if (sweep && !overwritten) continue;
         // (and a small one never: its texels exist nowhere else, and it is made once and kept by the game. The sky's
@@ -2695,6 +2716,7 @@ void texture_frame(uint64_t completed) {
         // each "written in one frame", and kept so they added up, ~20 MB a minute)
         const bool baked = tex->first_written && tex->first_written == tex->last_written && tex->bytes <= (4ull << 20);
         if (!overwritten && tex->gpu_written && !tex->released && !evict_rendered && baked) continue;
+        if (tex->gpu_written && !overwritten) lost_rendered[tex->gpu] = {tex->released, frame_no - last};
         watch_tex(tex, "evicted");
         destroy_later(*tex);
         forget_gpu(tex);

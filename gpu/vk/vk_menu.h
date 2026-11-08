@@ -26,7 +26,10 @@ struct Options {
     int classic_fog = 1;  // 1 Classic: the OoT visual workaround's thinner fog (RX_VK_OOT_VISUAL=1, as this fork had it), 0 the game's
                           // own fog (EvilOOT's default upstream); read at the start, as RX_VK_OOT_VISUAL (vk_shader.cpp; ini key "classic_fog")
     int tex_quality = 0;  // 0 Normal, 1 High: huge textures keep their top levels, ASTC is re-encoded as BC3 only from 8 MB, and the
-                          // texture budget is 9 GB instead of 6 (vk_texture.cpp); read at the start (ini key "texture_quality")
+                          // texture budget is 9 GB instead of 6 (vk_texture.cpp); 2 Ultra: High, and no ASTC is re-encoded as BC3;
+                          // read at the start (ini key "texture_quality")
+    int output_res = 0;   // 0 the game's (2048x1152 docked), 1 2560x1440: graphics scale level 0, docked only; read by the host at
+                          // the start (host/nn_applet.c; ini key "output_res")
 };
 extern Options opts;
 

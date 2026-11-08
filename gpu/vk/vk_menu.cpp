@@ -74,8 +74,17 @@ namespace {
     X(CONSOLE_D, "The game's docked or handheld profile; handheld is lighter and softer. Read at the start.",           \
       "O perfil do jogo na TV ou portátil; portátil é mais leve e mais suave. Lido ao iniciar.")                         \
     X(TEXQ, "Texture quality", "Qualidade de textura")                                                                   \
-    X(TEXQ_D, "High keeps the largest textures whole and re-encodes fewer of them; uses more VRAM. Read at the start.",  \
-      "Alta mantém as maiores texturas inteiras e recomprime menos; usa mais VRAM. Lido ao iniciar.")                    \
+    X(TEXQ_D, "High keeps the largest textures whole and re-encodes fewer of them; Ultra re-encodes none. Both use more " \
+      "VRAM. Read at the start.",                                                                                        \
+      "Alta mantém as maiores texturas inteiras e recomprime menos; Ultra não recomprime nenhuma. As duas usam mais "     \
+      "VRAM. Lido ao iniciar.")                                                                                          \
+    X(OUTRES, "Output resolution", "Resolução de saída")                                                                 \
+    X(OUTRES_D, "The size the game composes its picture at. 2560x1440: the 3D at 1920x1080, the game's TAAU brings it "  \
+      "to 2560x1440 and the HUD is sharp. Docked only. Read at the start.",                                              \
+      "O tamanho em que o jogo compõe a imagem. 2560x1440: o 3D a 1920x1080, a TAAU do jogo leva a 2560x1440 e o HUD "    \
+      "fica nítido. Só na TV. Lido ao iniciar.")                                                                         \
+    X(OUTRES_GAME, "Game (2048x1152)", "Jogo (2048x1152)")                                                               \
+    X(OUTRES_25K, "2560x1440 (2.5K)", "2560x1440 (2.5K)")                                                                \
     X(FOG, "Fog", "Névoa")                                                                                                \
     X(FOG_D, "Classic: the thinner fog this build had. Game's: the game's own haze (EvilOOT's fix). Read at the start.",  \
       "Clássica: a névoa mais fina que esta versão tinha. Do jogo: a névoa do próprio jogo (correção do EvilOOT). Lido ao iniciar.") \
@@ -83,6 +92,7 @@ namespace {
     X(FOG_GAME, "Game's", "Do jogo")                                                                                      \
     X(TQ_NORMAL, "Normal", "Normal")                                                                                        \
     X(TQ_HIGH, "High", "Alta")                                                                                              \
+    X(TQ_ULTRA, "Ultra", "Ultra")                                                                                           \
     X(DOCKED, "Docked", "Na TV")                                                                                         \
     X(HANDHELD, "Handheld", "Portátil")                                                                                  \
     X(FRAMEGEN, "Frame generation", "Geração de quadros")                                                                \
@@ -200,7 +210,8 @@ const char* tx_aniso(int v) { return v ? tx_times(v) : T(S_GAME); }
 const char* tx_framegen(int v) { return v ? tx_times(v) : T(S_OFF); }
 const char* tx_console(int v) { return T(v ? S_HANDHELD : S_DOCKED); }
 const char* tx_fog(int v) { return T(v ? S_FOG_CLASSIC : S_FOG_GAME); }
-const char* tx_texq(int v) { return T(v ? S_TQ_HIGH : S_TQ_NORMAL); }
+const char* tx_texq(int v) { return T(v >= 2 ? S_TQ_ULTRA : v ? S_TQ_HIGH : S_TQ_NORMAL); }
+const char* tx_outres(int v) { return T(v ? S_OUTRES_25K : S_OUTRES_GAME); }
 const char* tx_speed(int v) { return T(v ? S_REAL_TIME : S_PER_FRAME); }
 
 const int l_scale[] = {0, 100, 85, 75, 67, 58, 50, 44, 33};
@@ -229,7 +240,9 @@ Row rows[] = {
     {"upscaling", &opts.upscale, TAB_GRAPHICS, S_UPSCALER, S_UPSCALER_D, tx_upscale, nullptr, 0, 0, 4, 1, nullptr},
     {"sharpness", &opts.sharpness, TAB_GRAPHICS, S_SHARP, S_SHARP_D, tx_percent, nullptr, 0, 0, 100, 10, nullptr},
     {"anisotropy", &opts.anisotropy, TAB_GRAPHICS, S_ANISO, S_ANISO_D, tx_aniso, l_aniso, 5, 0, 0, 0, nullptr},
-    {"texture_quality", &opts.tex_quality, TAB_GRAPHICS, S_TEXQ, S_TEXQ_D, tx_texq, nullptr, 0, 0, 1, 1,
+    {"output_res", &opts.output_res, TAB_GRAPHICS, S_OUTRES, S_OUTRES_D, tx_outres, nullptr, 0, 0, 1, 1,
+     [](int) { return true; }},
+    {"texture_quality", &opts.tex_quality, TAB_GRAPHICS, S_TEXQ, S_TEXQ_D, tx_texq, nullptr, 0, 0, 2, 1,
      [](int) { return true; }},
     {"classic_fog", &opts.classic_fog, TAB_GRAPHICS, S_FOG, S_FOG_D, tx_fog, nullptr, 0, 0, 1, 1,
      [](int v) { return v != fog_start; }},

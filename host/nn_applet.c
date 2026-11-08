@@ -82,27 +82,29 @@ HLE(_ZN2nn2oe18GetDesiredLanguageEv) {
     memcpy(&v, desired_language(), strlen(desired_language()));
     RET(v);
 }
+/* (hookshot) an integer of the Insert menu's harpia_options.ini beside the exe (gpu/vk/vk_menu.cpp), else dflt */
+static int menu_option(const char *key, int dflt) {
+    char path[MAX_PATH];
+    const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+    char *slash = n ? (strrchr(path, 92) ? strrchr(path, 92) : strrchr(path, 47)) : NULL;   /* (linux: '/') */
+    if (!slash) return dflt;
+    snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "harpia_options.ini");
+    FILE *f = fopen(path, "r");
+    if (!f) return dflt;
+    char line[256];
+    const size_t k = strlen(key);
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, key, k) && line[k] == '=') dflt = atoi(line + k + 1);
+    fclose(f);
+    return dflt;
+}
 /* HOS_HANDHELD=1: handheld (the 1080p screen: 1080p output and the game's handheld resolutions) instead of docked
    (MKW docked composes 3840 x 2160) */
 static int handheld(void) {
     static int v = -1;
     if (v < 0) {
         v = getenv("HOS_HANDHELD") && atoi(getenv("HOS_HANDHELD")) != 0;
-        if (!getenv("HOS_HANDHELD")) {   /* (hookshot: the Insert menu's choice, gpu/vk/vk_menu.cpp) */
-            char path[MAX_PATH];
-            const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
-            char *slash = n ? (strrchr(path, 92) ? strrchr(path, 92) : strrchr(path, 47)) : NULL;   /* (linux: '/') */
-            if (slash) {
-                snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "harpia_options.ini");
-                FILE *f = fopen(path, "r");
-                if (f) {
-                    char line[80];
-                    while (fgets(line, sizeof line, f))
-                        if (!strncmp(line, "handheld_profile=", 17)) v = atoi(line + 17) != 0;
-                    fclose(f);
-                }
-            }
-        }
+        if (!getenv("HOS_HANDHELD")) v = menu_option("handheld_profile", 0) != 0;   /* (hookshot: the Insert menu's choice) */
     }
     return v;
 }
@@ -322,18 +324,30 @@ HLE(_ZN2nn7account26GetNetworkServiceAccountIdEPNS0_23NetworkServiceAccountIdERK
     G64(ARG(0)) = 0;
     RET(0x7C7C);
 }
-/* nn::oe::GetCurrentGraphicsScale() -> float (docked/handheld render scale): 1.0 */
+/* nn::oe::GetCurrentGraphicsScale() -> int, a level 0-2 (Switch 2; ocarina-recomp runtime/ov_system.c: Bananza maps it
+   through a float table {3, 12, 16}). OoT stores w0 beside the operation and performance modes (f_80e576a0 +44).
+   Before this returned anything x0 still held GetCurrentFocusState's 1, so 1 is the default.
+   HOS_GRAPHICS_SCALE_LEVEL=0|1|2: another level; else the menu's output_res=1 ("2560x1440", read at start: a restart)
+   is level 0, docked only. Measured: level 0 composes at the window's size (crop 2560x1440 docked), 1 at 0.8 of it (2048x1152, the
+   game's own), 2 at 2/3 (1706x960). v0 keeps the float for any caller that reads it. */
 HLE(_ZN2nn2oe23GetCurrentGraphicsScaleEv) {
     /* (hookshot) HOS_GRAPHICS_SCALE=<f>: another scale, a test of whether the game sizes its picture by it (4K, issue 68) */
     static float scale = 0;
+    static int level = -1;
     static volatile LONG told;
     if (scale == 0) scale = getenv("HOS_GRAPHICS_SCALE") ? (float)atof(getenv("HOS_GRAPHICS_SCALE")) : 1.0f;
     if (scale <= 0) scale = 1.0f;
-    if (InterlockedIncrement(&told) <= 3) hos_log("oe: GetCurrentGraphicsScale -> %.2f", scale);
+    if (level < 0) {
+        const char *e = getenv("HOS_GRAPHICS_SCALE_LEVEL");
+        /* (handheld keeps the game's level: level 0 there is untested) */
+        level = e && *e >= '0' && *e <= '2' && !e[1] ? *e - '0' : !handheld() && menu_option("output_res", 0) >= 1 ? 0 : 1;
+    }
+    if (InterlockedIncrement(&told) <= 3) hos_log("oe: GetCurrentGraphicsScale -> level %d (%.2f)", level, scale);
     const float one = scale;
     uint32_t bits;
     memcpy(&bits, &one, 4);
     c->vreg[0][0] = bits, c->vreg[0][1] = 0;
+    RET((uint64_t)level);
 }
 HLE(_ZN2nn2oe42SetGraphicsScaleChangedNotificationEnabledEb) {}
 HLE(_ZN2nn2oe31EnterExitRequestHandlingSectionEv) {}

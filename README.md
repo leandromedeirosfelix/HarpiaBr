@@ -57,12 +57,12 @@ Harpia está **em desenvolvimento ativo**. O jogo roda e é jogável; ainda há 
 | Ampliadores FSR 1 e NIS, Catmull-Rom, Lanczos | Funciona |
 | Proporção (esticar, ajustar 16:9, preencher), tela cheia, VSync | Funciona |
 | Filtragem anisotrópica (2x a 16x) | Funciona |
-| Qualidade de textura (Normal e Alta) | Funciona |
+| Qualidade de textura (Normal, Alta e Ultra) | Funciona |
 | Geração de quadros (2x a 8x) | Funciona; pode piscar em movimento rápido |
 | Cache de shaders que sobrevive a atualizações | Funciona |
 | Detector de quadros escuros (diagnóstico) | Funciona |
 | Controles configuráveis (teclado e controle) | Funciona |
-| **Resolução 2.5K nativa** (2560x1440) e textura "Ultra" | **Em andamento** (testado em ramo de desenvolvimento, ainda não integrado) |
+| Resolução de saída 2.5K nativa (2560x1440) | Funciona na TV (não no modo portátil); vale ao reiniciar; usa muita VRAM (cerca de 13 GB em testes), combine com textura Ultra |
 | **DLSS** | **Em andamento** (análise concluída, código ainda não testado em GPU) |
 | Instalador / pacote pronto do Builder | Planejado |
 
@@ -85,7 +85,7 @@ A Harpia lê o jogo **já descriptografado**, de um destes dois jeitos:
 1. **Arquivo `.nup`**: pacote que contém, para cada título, as árvores `exefs/` e `romfs/` do jogo. Vale o título mais novo do pacote.
 2. **Pastas `romfs` e `exefs`**: a mesma coisa, já extraída.
 
-Os dois vêm de um *dump feito por você, do seu próprio jogo*. Este projeto não ensina a fazer o dump.
+Os dois vêm de um *dump feito por você, do seu próprio jogo*, já descriptografado. Este projeto não ensina a fazer o dump. O `.nup` pode ter os arquivos guardados como estão ou comprimidos; o Builder lê os dois casos e também aceita que você **arraste o arquivo `.nup`** para a janela.
 
 ### Pelo Harpia Builder (janela)
 
@@ -123,7 +123,7 @@ Dentro do menu: <kbd>Q</kbd> / <kbd>E</kbd> trocam de aba, <kbd>↑</kbd> <kbd>�
 | Aba | Opções |
 |---|---|
 | **Tela** | Tela cheia · Proporção (Esticar / Ajustar 16:9 / Preencher) · VSync (Desligado / Ligado / Desligado com cortes) · Contador de FPS |
-| **Gráficos** | Escala de renderização (Auto, 100% a 33%) · Ampliação (Linear, Catmull-Rom, Lanczos, AMD FSR 1, NVIDIA NIS) · Nitidez · Filtragem de texturas (Jogo, 2x a 16x) · Qualidade de textura (Normal / Alta) · Névoa (Clássica / Do jogo) · Modo do console (Na TV / Portátil) |
+| **Gráficos** | Escala de renderização (Auto, 100% a 33%) · Ampliação (Linear, Catmull-Rom, Lanczos, AMD FSR 1, NVIDIA NIS) · Nitidez · Filtragem de texturas (Jogo, 2x a 16x) · Qualidade de textura (Normal / Alta / Ultra) · Resolução de saída (2048x1152 / 2560x1440) · Névoa (Clássica / Do jogo) · Modo do console (Na TV / Portátil) |
 | **Desempenho** | Geração de quadros (desligada, 2x a 8x) · Ritmo de quadros · Velocidade do jogo (Por quadro / Tempo real) |
 | **Controles** | Associar botões do controle e teclas |
 | **Info** | Placa de vídeo, saída, teclas e créditos |
@@ -152,16 +152,16 @@ Os caches e o log **derivam do jogo ou do seu PC**: não os anexe a relatórios 
 - **Folhagem escura em Kokiri** (samambaias, cipós): a correção do projeto original está incluída; a verificação visual continua.
 - **Perda de dispositivo da GPU** (*device lost*), rara, observada em testes de desenvolvimento; uma causa provável foi corrigida e o caso segue em observação.
 - **Geração de quadros** pode cintilar em movimento rápido, no HUD e em cortes de câmera.
-- A saída fica em 2048x1152 por enquanto (2.5K é trabalho em andamento).
+- A saída padrão é 2048x1152; 2560x1440 é opcional (aba Gráficos) e testado quase só com textura Ultra: com textura Alta houve mais quadros escuros em testes.
 - Sem instalador pronto; o build Linux existe no código mas **não é suportado**.
 
 Achou outro? Veja [como reportar um bug](CONTRIBUTING.md#reportar-um-bug).
 
 ## Roteiro
 
-**Concluído** (uma etapa por commit no histórico): atualização do projeto original (folhagem, iluminação, filmes) · correção de páginas liberadas durante a importação para a GPU · cache de shaders robusto (notas que sobrevivem a mudanças, marcador de falha) · correções do tradutor e detector de quadros escuros · desempenho de CPU.
+**Concluído** (uma etapa por commit no histórico): saída 2.5K nativa e textura Ultra · atualização do projeto original (folhagem, iluminação, filmes) · correção de páginas liberadas durante a importação para a GPU · cache de shaders robusto (notas que sobrevivem a mudanças, marcador de falha) · correções do tradutor e detector de quadros escuros · desempenho de CPU.
 
-**Em andamento:** resolução de saída 2.5K nativa e textura "Ultra" · DLSS (viável com vetores de movimento reconstruídos da câmera; as DLLs da NVIDIA são proprietárias e **não serão distribuídas** pelo projeto) · compilação de shaders em segundo plano · a causa das piscadas.
+**Em andamento:** DLSS (viável com vetores de movimento reconstruídos da câmera; as DLLs da NVIDIA são proprietárias e **não serão distribuídas** pelo projeto) · compilação de shaders em segundo plano · a causa das piscadas.
 
 **Planejado:** pacote pronto do Harpia Builder · ajuste de cor e painel de desempenho · opção do Builder para usar mais CPU e RAM e acelerar a instalação · documentação técnica em português.
 

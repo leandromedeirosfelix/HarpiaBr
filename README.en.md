@@ -57,12 +57,12 @@ Harpia is **under active development**. The game runs and is playable; rough edg
 | FSR 1 and NIS upscalers, Catmull-Rom, Lanczos | Works |
 | Aspect ratio (stretch, fit 16:9, fill), fullscreen, VSync | Works |
 | Anisotropic filtering (2x to 16x) | Works |
-| Texture quality (Normal and High) | Works |
+| Texture quality (Normal, High and Ultra) | Works |
 | Frame generation (2x to 8x) | Works; may flicker on fast motion |
 | Shader cache that survives updates | Works |
 | Dark-frame detector (diagnostic) | Works |
 | Rebindable controls (keyboard and gamepad) | Works |
-| **Native 2.5K resolution** (2560x1440) and "Ultra" textures | **In progress** (tested on a development branch, not yet integrated) |
+| Native 2.5K output resolution (2560x1440) | Works docked (not handheld); applies after a restart; uses a lot of VRAM (about 13 GB in tests), pair it with Ultra textures |
 | **DLSS** | **In progress** (analysis done, code not yet tested on a GPU) |
 | Installer / ready-made Builder package | Planned |
 
@@ -85,7 +85,7 @@ Harpia reads the game **already decrypted**, in one of two forms:
 1. **A `.nup` file**: a package holding, for each title, the game's `exefs/` and `romfs/` trees. The newest title in the package is used.
 2. **`romfs` and `exefs` folders**: the same thing, already extracted.
 
-Both come from *a dump you made of your own game*. This project does not teach how to make the dump.
+Both come from *a dump you made of your own game*, already decrypted. This project does not teach how to make the dump. The `.nup` may store its files as they are or compressed; the Builder reads both and also lets you **drag the `.nup` file** onto the window.
 
 ### With the Harpia Builder (window)
 
@@ -123,7 +123,7 @@ Inside the menu: <kbd>Q</kbd> / <kbd>E</kbd> switch tab, <kbd>↑</kbd> <kbd>↓
 | Tab | Options |
 |---|---|
 | **Display** | Fullscreen · Aspect ratio (Stretch / Fit 16:9 / Fill) · VSync (Off / On / Off with tearing) · FPS counter |
-| **Graphics** | Render scale (Auto, 100% to 33%) · Upscaler (Linear, Catmull-Rom, Lanczos, AMD FSR 1, NVIDIA NIS) · Sharpness · Texture filtering (Game, 2x to 16x) · Texture quality (Normal / High) · Fog (Classic / Game's) · Console mode (Docked / Handheld) |
+| **Graphics** | Render scale (Auto, 100% to 33%) · Upscaler (Linear, Catmull-Rom, Lanczos, AMD FSR 1, NVIDIA NIS) · Sharpness · Texture filtering (Game, 2x to 16x) · Texture quality (Normal / High / Ultra) · Output resolution (2048x1152 / 2560x1440) · Fog (Classic / Game's) · Console mode (Docked / Handheld) |
 | **Performance** | Frame generation (off, 2x to 8x) · Frame pacing · Game speed (Per frame / Real time) |
 | **Controls** | Bind gamepad buttons and keys |
 | **Info** | Graphics card, output, keys and credits |
@@ -152,16 +152,16 @@ Caches and the log **derive from the game or your PC**: do not attach them to re
 - **Dark foliage in Kokiri** (ferns, vines): the original project's fix is included; visual verification continues.
 - **GPU device loss** (*device lost*), rare, seen in development testing; a probable cause was fixed and the case remains under observation.
 - **Frame generation** may flicker on fast motion, the HUD and camera cuts.
-- Output stays at 2048x1152 for now (2.5K is work in progress).
+- The default output is 2048x1152; 2560x1440 is optional (Graphics tab) and tested almost only with Ultra textures: with High textures there were more dark frames in tests.
 - No ready-made installer; a Linux build exists in the code but is **not supported**.
 
 Found another? See [how to report a bug](CONTRIBUTING.en.md#reporting-a-bug).
 
 ## Roadmap
 
-**Done** (one step per commit in the history): upstream update (foliage, lighting, movies) · fix for pages freed during import to the GPU · sturdier shader cache (notes that survive changes, crash marker) · translator fixes and the dark-frame detector · CPU performance.
+**Done** (one step per commit in the history): native 2.5K output and Ultra textures · upstream update (foliage, lighting, movies) · fix for pages freed during import to the GPU · sturdier shader cache (notes that survive changes, crash marker) · translator fixes and the dark-frame detector · CPU performance.
 
-**In progress:** native 2.5K output resolution and "Ultra" textures · DLSS (feasible with camera-reconstructed motion vectors; NVIDIA's DLLs are proprietary and **will not be distributed** by the project) · background shader compilation · the cause of the flashes.
+**In progress:** DLSS (feasible with camera-reconstructed motion vectors; NVIDIA's DLLs are proprietary and **will not be distributed** by the project) · background shader compilation · the cause of the flashes.
 
 **Planned:** ready-made Harpia Builder package · colour adjustment and a performance panel · a Builder option to use more CPU and RAM to speed up installation · technical documentation in Portuguese.
 
