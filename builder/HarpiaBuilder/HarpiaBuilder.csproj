@@ -24,4 +24,11 @@
     <DebugType>none</DebugType>
   </PropertyGroup>
 
+  <!-- Inter (SIL Open Font License, Fonts/Inter-LICENSE.txt) and the harpia, inside the app -->
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Images\harpia.png" />
+    <None Include="Fonts\Inter-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

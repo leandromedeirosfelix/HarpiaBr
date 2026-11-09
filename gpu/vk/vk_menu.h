@@ -13,6 +13,10 @@ struct Options {
     int render_scale = 0; // the 3D's render scale: 0 Auto (the game's dynamic resolution), else a percent of its full scale, one of
                           // 100 85 75 67 58 50 44 33 (nx2/oot_patches.py, host/nn_vi.c; ini key "render_scale")
     int upscale = 0;      // to the window: 0 linear, 1 Catmull-Rom, 2 Lanczos, 3 AMD FSR 1 (EASU), 4 NVIDIA Image Scaling (NIS)
+    int dlss = 0;         // NVIDIA DLSS in place of OoT's upscale: 0 off, 1 Auto, 2 DLAA, 3 Quality, 4 Balanced, 5 Performance,
+                          // 6 Ultra Performance; sets the render scale (vk_dlss.cpp); on or off read at the start (ini key "dlss")
+    int dlssg = 0;        // NVIDIA DLSS Frame Generation: 0 off, 2, 3 or 4 frames shown per game frame (RTX 40: 2 only), with
+                          // Reflex; never with framegen; on or off read at the start (vk_dlss.cpp; ini key "dlss_frame_generation")
     int sharpness = 0;    // 0 to 100: RCAS after FSR 1, NIS's own sharpening with NIS, the contrast-limited sharpen otherwise
     int aspect = 0;       // 0 Stretch the 16:9 picture to the window (as before), 1 Fit: 16:9 with black bars, 2 Fill: the camera at the
                           // monitor's shape, any ratio, read once at the start (host/hos_main.c; ini key "aspect")
@@ -30,12 +34,26 @@ struct Options {
                           // read at the start (ini key "texture_quality")
     int output_res = 0;   // 0 the game's (2048x1152 docked), 1 2560x1440: graphics scale level 0, docked only; read by the host at
                           // the start (host/nn_applet.c; ini key "output_res")
+    int gpu_device = 0;   // graphics card index: 0 Auto, 1..N device 0..N-1 (gpu/vk/vk_main.cpp; RX_VK_DEVICE)
+    int pad_background = 0;   // the controllers count while another window has the focus (host/nn_hid.c; HOS_INPUT_BACKGROUND)
+    int mouse_native = 0; // the mouse turns the camera's own angles (host/mouse_native.c); 0: as the right stick
+    int mouse_sens = 100; // the mouse's sensitivity in percent: 0.1 degrees a count at 100 with native look (host/nn_hid.c)
+    int mouse_invert = 0; // the mouse's up and down swapped
+    int text_speed = 0;   // how fast dialogue prints: 0 the game's, 1 2x, 2 4x, 3 instant (host/nn_vi.c, nx2/oot_patches.py; HOS_TEXT_SPEED)
+    int invert_cam_x = 0; // right-stick camera horizontal inversion: 0 normal, 1 inverted
+    int invert_cam_y = 0; // right-stick camera vertical inversion: 0 normal, 1 inverted
+    int pad_layout = 0;   // 0 Nintendo (default), 1 Xbox / PC, 2 Swap Face Buttons, 3 Custom
+    int robust = 0;       // bounds-checked buffer access: 0 Auto (on), 1 Off, 2 On (gpu/vk/vk_main.cpp; RX_VK_ROBUST)
+    int preset = 0;       // quality preset: 0 Custom, 1 Minimum (4GB), 2 Low (6GB), 3 Balanced (8GB), 4 High (12GB), 5 Ultra (16GB+)
 };
 extern Options opts;
 
 void menu_init();             // (the options from the file, once)
+void menu_set_gpu_count(int count);
 void menu_tick();             // (each frame shown: the keys, while the game's window has the focus)
 bool menu_is_open();
+int menu_dlss_scale();   // (hookshot: the percent DLSS SR or DLSS-G fixes while loaded, the host's options 2 and 3; -1: the player's)
+void menu_option_set(int id, int value);   // (from the game's side: 7 the mouse's sensitivity, the - and = keys)
 void menu_note_frame(bool game_frame);   // (the frame rates the FPS counter shows)
 /// Over the window's image (TRANSFER_DST_OPTIMAL), w x h: the menu and the FPS counter. slot: the frame in flight, 0 to 2.
 void menu_record(VkCommandBuffer cmd, VkImage dst, int slot, uint32_t w, uint32_t h);

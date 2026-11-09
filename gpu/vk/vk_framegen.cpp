@@ -20,6 +20,7 @@
 
 #include "vk_framegen.h"
 #include "vk_menu.h"
+#include "vk_dlss.h"   // (hookshot: never with DLSS Frame Generation)
 #include "vk_texture.h"
 
 #include "shaders/fg_copy_comp_spv.h"
@@ -32,6 +33,7 @@
 #include "shaders/fsr_rcas_comp_spv.h"
 #include "shaders/nis_scale_comp_spv.h"
 #include "shaders/nis/NIS_Config.h"   // (local: NVScalerUpdateConfig and the coefficient tables; NVIDIA's, MIT)
+#include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
 
 namespace mkwvk {
 extern std::atomic<uint32_t> present_kind;   // (vk_replay.cpp: the frame log's)
@@ -67,20 +69,7 @@ struct Pipe {
 struct State {
     bool init = false, failed = false;
     uint32_t w = 0, h = 0;
-    Pipe copy, luma, flow, median, synth, scale;
-    Img cropped;
-    uint32_t cropped_w = 0, cropped_h = 0;
-    Img scaled;   // (the Insert menu's upscaling: at the window's size)
-    uint32_t scaled_w = 0, scaled_h = 0;
-    // (local) FSR 1 and NIS, made the first time they are chosen: EASU's picture before RCAS (only with Sharpness), NIS's
-    // coefficient tables (uploaded once, their staging buffer kept)
-    Pipe easu, rcas, nis;
-    bool fsr_tried = false, nis_tried = false;
-    Img easu_out;
-    uint32_t easu_w = 0, easu_h = 0;
-    Img nis_coef[2];
-    VkBuffer nis_stage = VK_NULL_HANDLE;
-    VmaAllocation nis_stage_alloc = nullptr;
+    Pipe copy, luma, flow, median, synth;
     VkSampler nearest = VK_NULL_HANDLE, linear = VK_NULL_HANDLE;
     Img frames[2], lumas[2], flows[2];
     OutSet sets[3];   // (one shown, one waiting its place on the line, one being made: the pacer never holds the game back)
@@ -95,6 +84,24 @@ struct State {
     int64_t recorded_at = 0;
     int mult = 0;   // (the multiplier the sets' frames were made for)
 } fg;
+
+// Used only by present_image, whose lock serializes direct and interpolated presents.
+struct ScaleState {
+    bool init = false, failed = false;
+    Pipe pipe;
+    VkSampler linear = VK_NULL_HANDLE, nearest = VK_NULL_HANDLE;   // (local: nearest for RCAS, frame generation's own not made)
+    Img cropped, scaled;
+    uint32_t cropped_w = 0, cropped_h = 0, scaled_w = 0, scaled_h = 0;
+    // (local) FSR 1 and NIS, made the first time they are chosen: EASU's picture before RCAS (only with Sharpness), NIS's
+    // coefficient tables (uploaded once, their staging buffer kept)
+    Pipe easu, rcas, nis;
+    bool fsr_tried = false, nis_tried = false;
+    Img easu_out;
+    uint32_t easu_w = 0, easu_h = 0;
+    Img nis_coef[2];
+    VkBuffer nis_stage = VK_NULL_HANDLE;
+    VmaAllocation nis_stage_alloc = nullptr;
+} scale;
 
 int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -149,8 +156,7 @@ bool init() {
         !make_pipe(fg.luma, FG_LUMA_COMP_SPV, sizeof FG_LUMA_COMP_SPV, {S, I}, 0) ||
         !make_pipe(fg.flow, FG_FLOW_COMP_SPV, sizeof FG_FLOW_COMP_SPV, {S, S, I}, 0, &spec) ||
         !make_pipe(fg.median, FG_MEDIAN_COMP_SPV, sizeof FG_MEDIAN_COMP_SPV, {S, I}, 0) ||
-        !make_pipe(fg.synth, FG_SYNTH_COMP_SPV, sizeof FG_SYNTH_COMP_SPV, {S, S, S, I}, 4) ||
-        !make_pipe(fg.scale, FG_SCALE_COMP_SPV, sizeof FG_SCALE_COMP_SPV, {S, I}, 8))
+        !make_pipe(fg.synth, FG_SYNTH_COMP_SPV, sizeof FG_SYNTH_COMP_SPV, {S, S, S, I}, 4))
         return false;
     VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
     si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -161,6 +167,28 @@ bool init() {
     fg.failed = false;
     logf("vk: frame interpolation ready: %dx the game's frames (made from its last two, shown evenly)", multiplier());
     return true;
+}
+
+bool init_scale() {
+    if (scale.init) return !scale.failed;
+    scale.init = scale.failed = true;
+    if (!dev.push_descriptor || !vkCmdPushDescriptorSetKHR) return false;
+    const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    if (make_pipe(scale.pipe, FG_SCALE_COMP_SPV, sizeof FG_SCALE_COMP_SPV, {S, I}, 8)) {
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.maxLod = 0.25f;
+        si.magFilter = si.minFilter = VK_FILTER_LINEAR;
+        if (vkCreateSampler(dev.device, &si, nullptr, &scale.linear) == VK_SUCCESS) {
+            scale.failed = false;
+            return true;
+        }
+    }
+    if (scale.pipe.pipe) vkDestroyPipeline(dev.device, scale.pipe.pipe, nullptr);
+    if (scale.pipe.layout) vkDestroyPipelineLayout(dev.device, scale.pipe.layout, nullptr);
+    if (scale.pipe.set) vkDestroyDescriptorSetLayout(dev.device, scale.pipe.set, nullptr);
+    scale.pipe = {};
+    return false;
 }
 
 bool make_img(Img& i, uint32_t w, uint32_t h, VkFormat f, VkImageUsageFlags usage) {
@@ -206,7 +234,11 @@ bool ensure_size(VkCommandBuffer cmd, uint32_t w, uint32_t h) {
         std::unique_lock lk(fg.mu);
         fg.cv.wait(lk, [] { return fg.jobs.empty() && !fg.sets[0].busy && !fg.sets[1].busy && !fg.sets[2].busy; });
     }
-    vkDeviceWaitIdle(dev.device);
+    {   // (review: as the other wait-idle sites, under present_mu: the queue idle only while nothing else submits to it)
+        std::lock_guard qk(dev.present_mu);
+        queue_flush_locked();
+        vkDeviceWaitIdle(dev.device);
+    }
     for (int i = 0; i < 2; i++) {
         drop_img(fg.frames[i]), drop_img(fg.lumas[i]), drop_img(fg.flows[i]);
     }
@@ -329,11 +361,15 @@ bool sized(VkCommandBuffer cmd, Img& img, uint32_t& cur_w, uint32_t& cur_h, uint
     if (img.image && cur_w == w && cur_h == h) return true;
     {
         std::lock_guard qk(dev.present_mu);   // (the queue is idle only while nothing else submits to it)
+        queue_flush_locked();   // (RX_VK_BATCH: held submits out first, or the wait misses them)
         vkDeviceWaitIdle(dev.device);
     }
     drop_img(img);
     cur_w = cur_h = 0;
-    if (!make_img(img, w, h, VK_FORMAT_R8G8B8A8_UNORM, usage)) return false;
+    if (!make_img(img, w, h, VK_FORMAT_R8G8B8A8_UNORM, usage)) {
+        drop_img(img);   // (an image made whose view was not: not kept half made, as upstream's scaler)
+        return false;
+    }
     cur_w = w, cur_h = h;
     to_general(cmd, img.image);
     return true;
@@ -348,60 +384,70 @@ void drop_pipe(Pipe& p) {
 }
 
 bool fsr_ready() {
-    if (!fg.fsr_tried) {
-        fg.fsr_tried = true;
+    if (!scale.fsr_tried) {
+        scale.fsr_tried = true;
         const VkDescriptorType S = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, I = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        if (!make_pipe(fg.easu, FSR_EASU_COMP_SPV, sizeof FSR_EASU_COMP_SPV, {S, I}, 0) ||
-            !make_pipe(fg.rcas, FSR_RCAS_COMP_SPV, sizeof FSR_RCAS_COMP_SPV, {S, I}, 4)) {
-            drop_pipe(fg.easu), drop_pipe(fg.rcas);
+        if (!make_pipe(scale.easu, FSR_EASU_COMP_SPV, sizeof FSR_EASU_COMP_SPV, {S, I}, 0) ||
+            !make_pipe(scale.rcas, FSR_RCAS_COMP_SPV, sizeof FSR_RCAS_COMP_SPV, {S, I}, 4)) {
+            drop_pipe(scale.easu), drop_pipe(scale.rcas);
             logf("vk: FSR 1: its pipelines were not made: Lanczos instead");
         }
+        if (scale.easu.pipe && !scale.nearest) {   // (local: RCAS's point sampler, made with FSR alone: init_scale makes one)
+            VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+            si.addressModeU = si.addressModeV = si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            si.maxLod = 0.25f;
+            if (vkCreateSampler(dev.device, &si, nullptr, &scale.nearest) != VK_SUCCESS) {
+                scale.nearest = VK_NULL_HANDLE;
+                drop_pipe(scale.easu), drop_pipe(scale.rcas);
+                logf("vk: FSR 1: no sampler: Lanczos instead");
+            }
+        }
     }
-    return fg.easu.pipe && fg.rcas.pipe;
+    return scale.easu.pipe && scale.rcas.pipe && scale.nearest;
 }
 
 constexpr uint32_t kNisPush = offsetof(NISConfig, reserved1) + sizeof(float);   // (NISConfig without its padding to 256)
 
 /// NIS's pipeline and its coefficient tables (NIS_Config.h's, 2 x 64 RGBA32F each), their upload recorded into cmd
 bool nis_ready(VkCommandBuffer cmd) {
-    if (fg.nis_tried) return fg.nis.pipe;
-    fg.nis_tried = true;
+    if (scale.nis_tried) return scale.nis.pipe;
+    scale.nis_tried = true;
     constexpr uint32_t bytes = sizeof coef_scale;
     static_assert(sizeof coef_usm == bytes && bytes == 2 * 64 * 16, "two RGBA32F texels a phase, 64 phases");
     void* map = nullptr;
     const VkDescriptorType T = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    bool ok = make_pipe(fg.nis, NIS_SCALE_COMP_SPV, sizeof NIS_SCALE_COMP_SPV,
+    bool ok = make_pipe(scale.nis, NIS_SCALE_COMP_SPV, sizeof NIS_SCALE_COMP_SPV,
                         {VK_DESCRIPTOR_TYPE_SAMPLER, T, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, T, T}, kNisPush) &&
-              create_buffer(2 * bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, fg.nis_stage, fg.nis_stage_alloc, &map) && map;
+              create_buffer(2 * bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, true, scale.nis_stage, scale.nis_stage_alloc, &map) && map;
     for (int i = 0; ok && i < 2; i++)
-        ok = make_img(fg.nis_coef[i], 2, 64, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        ok = make_img(scale.nis_coef[i], 2, 64, VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
     if (!ok) {   // (nothing recorded yet: freed at once; not tried again)
-        drop_pipe(fg.nis);
-        drop_img(fg.nis_coef[0]), drop_img(fg.nis_coef[1]);
-        if (fg.nis_stage) destroy_buffer(fg.nis_stage, fg.nis_stage_alloc);
-        fg.nis_stage = VK_NULL_HANDLE, fg.nis_stage_alloc = nullptr;
+        drop_pipe(scale.nis);
+        drop_img(scale.nis_coef[0]), drop_img(scale.nis_coef[1]);
+        if (scale.nis_stage) destroy_buffer(scale.nis_stage, scale.nis_stage_alloc);
+        scale.nis_stage = VK_NULL_HANDLE, scale.nis_stage_alloc = nullptr;
         logf("vk: NIS: its pipeline or tables were not made: Lanczos instead");
         return false;
     }
     memcpy(map, coef_scale, bytes);
     memcpy((uint8_t*)map + bytes, coef_usm, bytes);
-    flush_mapped(fg.nis_stage_alloc, 2 * bytes);
+    flush_mapped(scale.nis_stage_alloc, 2 * bytes);
     for (int i = 0; i < 2; i++) {
-        to_general(cmd, fg.nis_coef[i].image);
+        to_general(cmd, scale.nis_coef[i].image);
         const VkBufferImageCopy c{(VkDeviceSize)i * bytes, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {2, 64, 1}};
-        vkCmdCopyBufferToImage(cmd, fg.nis_stage, fg.nis_coef[i].image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+        vkCmdCopyBufferToImage(cmd, scale.nis_stage, scale.nis_coef[i].image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
     }
     full_barrier(cmd);
     return true;
 }
 
-/// NIS from src into fg.scaled, gx x gy groups of 32 x 24 pixels: bindings of its own (the sampler and the textures apart)
+/// NIS from src into scale.scaled, gx x gy groups of 32 x 24 pixels: bindings of its own (the sampler and the textures apart)
 void nis_pass(VkCommandBuffer cmd, VkImageView src, const NISConfig* c, uint32_t gx, uint32_t gy) {
-    const VkDescriptorImageInfo ii[5] = {{fg.linear, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL},
+    const VkDescriptorImageInfo ii[5] = {{scale.linear, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL},
                                          {VK_NULL_HANDLE, src, VK_IMAGE_LAYOUT_GENERAL},
-                                         {VK_NULL_HANDLE, fg.scaled.view, VK_IMAGE_LAYOUT_GENERAL},
-                                         {VK_NULL_HANDLE, fg.nis_coef[0].view, VK_IMAGE_LAYOUT_GENERAL},
-                                         {VK_NULL_HANDLE, fg.nis_coef[1].view, VK_IMAGE_LAYOUT_GENERAL}};
+                                         {VK_NULL_HANDLE, scale.scaled.view, VK_IMAGE_LAYOUT_GENERAL},
+                                         {VK_NULL_HANDLE, scale.nis_coef[0].view, VK_IMAGE_LAYOUT_GENERAL},
+                                         {VK_NULL_HANDLE, scale.nis_coef[1].view, VK_IMAGE_LAYOUT_GENERAL}};
     const VkDescriptorType T = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     const VkDescriptorType types[5] = {VK_DESCRIPTOR_TYPE_SAMPLER, T, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, T, T};
     VkWriteDescriptorSet ws[5];
@@ -412,9 +458,9 @@ void nis_pass(VkCommandBuffer cmd, VkImageView src, const NISConfig* c, uint32_t
         ws[n].descriptorType = types[n];
         ws[n].pImageInfo = &ii[n];
     }
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fg.nis.pipe);
-    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, fg.nis.layout, 0, 5, ws);
-    vkCmdPushConstants(cmd, fg.nis.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, kNisPush, c);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, scale.nis.pipe);
+    vkCmdPushDescriptorSetKHR(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, scale.nis.layout, 0, 5, ws);
+    vkCmdPushConstants(cmd, scale.nis.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, kNisPush, c);
     vkCmdDispatch(cmd, gx, gy, 1);
     full_barrier(cmd);
 }
@@ -430,37 +476,45 @@ bool framegen_wanted(int menu_value, int allow) {
 
 bool framegen_on() {
     static const int allow = !getenv("RX_VK_FRAMEGEN") || atoi(getenv("RX_VK_FRAMEGEN")) != 0;
-    return framegen_wanted(opts.framegen, allow) && !dev.offscreen && !fg.failed;
+    return framegen_wanted(opts.framegen, allow) && !dev.offscreen && !fg.failed && !(dlssg_on() && opts.dlssg >= 2);   // (hookshot: or DLSS-G's)
 }
 
 VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint32_t sw, uint32_t sh, const int crop[4], uint32_t dw, uint32_t dh) {
     if (!opts.upscale && !opts.sharpness) return VK_NULL_HANDLE;
-    if (!src || !fg.scale.pipe) return VK_NULL_HANDLE;
+    if (!src || !image || !sw || !sh || !dw || !dh) return VK_NULL_HANDLE;
+    if (crop && crop[2] > 0 && crop[3] > 0 &&
+        (crop[0] < 0 || crop[1] < 0 || (uint32_t)crop[0] >= sw || (uint32_t)crop[1] >= sh)) return VK_NULL_HANDLE;
+    if (!init_scale()) return VK_NULL_HANDLE;   // (upstream fbafffb: its own pipelines, frame generation on or off)
     // (the game draws into part of its window textures, 2048 x 1152 of 2560 x 1440 here: the filter was given the whole texture, and the
     // picture came out in the top left corner of the window with black around it. The crop first, then the filter)
     if (crop && crop[2] > 0 && crop[3] > 0 && (crop[0] || crop[1] || (uint32_t)crop[2] < sw || (uint32_t)crop[3] < sh)) {
         const uint32_t cw = std::min((uint32_t)crop[2], sw - (uint32_t)crop[0]), ch = std::min((uint32_t)crop[3], sh - (uint32_t)crop[1]);
-        if (fg.cropped_w != cw || fg.cropped_h != ch) {
+        if (scale.cropped_w != cw || scale.cropped_h != ch) {
             {
                 std::lock_guard qk(dev.present_mu);
+                queue_flush_locked();
                 vkDeviceWaitIdle(dev.device);
             }
-            drop_img(fg.cropped);
-            if (!make_img(fg.cropped, cw, ch, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) return VK_NULL_HANDLE;
-            fg.cropped_w = cw, fg.cropped_h = ch;
-            to_general(cmd, fg.cropped.image);
+            drop_img(scale.cropped);
+            scale.cropped_w = scale.cropped_h = 0;
+            if (!make_img(scale.cropped, cw, ch, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
+                drop_img(scale.cropped);
+                return VK_NULL_HANDLE;
+            }
+            scale.cropped_w = cw, scale.cropped_h = ch;
+            to_general(cmd, scale.cropped.image);
         }
         VkImageBlit b{};
         b.srcSubresource = b.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
         b.srcOffsets[0] = {crop[0], crop[1], 0};
         b.srcOffsets[1] = {crop[0] + (int)cw, crop[1] + (int)ch, 1};
         b.dstOffsets[1] = {(int)cw, (int)ch, 1};
-        vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, fg.cropped.image, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_NEAREST);
+        vkCmdBlitImage(cmd, image, VK_IMAGE_LAYOUT_GENERAL, scale.cropped.image, VK_IMAGE_LAYOUT_GENERAL, 1, &b, VK_FILTER_NEAREST);
         full_barrier(cmd);
-        src = fg.cropped.view;
+        src = scale.cropped.view;
         sw = cw, sh = ch;   // (local: from here the source is the crop alone)
     }
-    if (!sized(cmd, fg.scaled, fg.scaled_w, fg.scaled_h, dw, dh, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
+    if (!sized(cmd, scale.scaled, scale.scaled_w, scale.scaled_h, dw, dh, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT))
         return VK_NULL_HANDLE;
     // (local) FSR 1 and NIS only enlarge (NIS's tile holds at most a source pixel per window pixel): a frame bigger than the
     // window goes through Lanczos, as does one whose pipelines could not be made
@@ -470,17 +524,27 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
     if (mode == 4 && !nis_ready(cmd)) mode = 2;
     present_scale_mode = mode, present_scale_w = sw, present_scale_h = sh;
     const int sharpness = std::clamp(opts.sharpness, 0, 100);
+    const auto dispatched = [&] {   // (upstream: RX_VK_UPSCALE_LOG=1, the first dispatch, said once after it)
+        static const bool report = getenv("RX_VK_UPSCALE_LOG") != nullptr;
+        static bool reported = false;
+        if (report && !reported) {
+            reported = true;
+            logf("vk: upscale dispatched: mode %d, sharpness %d, source %ux%u, crop request %d,%d %dx%d, destination %ux%u", mode,
+                 sharpness, sw, sh, crop ? crop[0] : 0, crop ? crop[1] : 0, crop ? crop[2] : (int)sw, crop ? crop[3] : (int)sh, dw, dh);
+        }
+        return scale.scaled.image;
+    };
     if (mode == 3) {
         // (Sharpness 1 to 100: RCAS from 2 stops down to 0, its strongest; 0: EASU alone, straight into the window's image)
         const bool sharpen = sharpness > 0;
-        if (sharpen && !sized(cmd, fg.easu_out, fg.easu_w, fg.easu_h, dw, dh, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
+        if (sharpen && !sized(cmd, scale.easu_out, scale.easu_w, scale.easu_h, dw, dh, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT))
             return VK_NULL_HANDLE;
-        pass(cmd, fg.easu, {{src, fg.linear}, {(sharpen ? fg.easu_out : fg.scaled).view, VK_NULL_HANDLE}}, dw, dh);
+        pass(cmd, scale.easu, {{src, scale.linear}, {(sharpen ? scale.easu_out : scale.scaled).view, VK_NULL_HANDLE}}, dw, dh);
         if (sharpen) {
             const float con = std::exp2(-2.0f * (1.0f - sharpness / 100.0f));
-            pass(cmd, fg.rcas, {{fg.easu_out.view, fg.nearest}, {fg.scaled.view, VK_NULL_HANDLE}}, dw, dh, &con, sizeof con);
+            pass(cmd, scale.rcas, {{scale.easu_out.view, scale.nearest}, {scale.scaled.view, VK_NULL_HANDLE}}, dw, dh, &con, sizeof con);
         }
-        return fg.scaled.image;
+        return dispatched();
     }
     if (mode == 4) {
         // (its own check refuses more than 2x and returns false, the config filled all the same: past 2x the tile still holds
@@ -488,11 +552,11 @@ VkImage framegen_scale(VkCommandBuffer cmd, VkImageView src, VkImage image, uint
         NISConfig c{};
         NVScalerUpdateConfig(c, sharpness / 100.0f, 0, 0, sw, sh, sw, sh, 0, 0, dw, dh, dw, dh);
         nis_pass(cmd, src, &c, (dw + 31) / 32, (dh + 23) / 24);
-        return fg.scaled.image;
+        return dispatched();
     }
     const struct { int mode; float sharp; } pc{mode, sharpness / 100.0f};
-    pass(cmd, fg.scale, {{src, fg.linear}, {fg.scaled.view, VK_NULL_HANDLE}}, dw, dh, &pc, sizeof pc);
-    return fg.scaled.image;
+    pass(cmd, scale.pipe, {{src, scale.linear}, {scale.scaled.view, VK_NULL_HANDLE}}, dw, dh, &pc, sizeof pc);
+    return dispatched();
 }
 
 VkImage framegen_made_image(uint32_t* w, uint32_t* h) {

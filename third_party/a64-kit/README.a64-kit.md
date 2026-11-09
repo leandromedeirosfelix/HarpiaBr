@@ -1,3 +1,5 @@
+> Reproduzido sem alterações do TOTKPort/Hookshot; os caminhos e links abaixo se referem àquela árvore. O que existe aqui está em [PROVENANCE.md](PROVENANCE.md). / Reproduced verbatim from TOTKPort/Hookshot; paths and links refer to that tree; see PROVENANCE.md for what is here.
+
 # a64-kit: AArch64 (Nintendo Switch)
 
 The fourth kit, for 64-bit ARM console code. First port: [Tears of the Kingdom](../ports/zelda-totk/PORT.md).
@@ -7,7 +9,7 @@ instruction form the game uses matches Unicorn bit for bit, and the native build
 layer (`hos/`) is only the image builder and a loader so far: nothing boots yet.
 
 **Licensing:** the instruction translator is suyu's (GPL-2.0-or-later, `lift/suyu/`), so this kit and everything
-built with it is GPL. The other kits are untouched by it. See [third_party/NOTICE.md](../third_party/NOTICE.md).
+built with it are GPL. The other kits are untouched by it. See [third_party/NOTICE.md](../third_party/NOTICE.md).
 
 ## Pipeline
 

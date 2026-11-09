@@ -52,8 +52,9 @@ int self_test() {
         std::snprintf(what, sizeof what, "DEPBAR words[1] %#x (an OoT encoding) lowers", w1);
         check((bool)r, what);
     }
-    check(!Shader::Ampere::LowerToMaxwell(std::vector<Instruction>{{{0x791a, 0x0040, 0, 0}}, kExit}),
-          "DEPBAR without bit 47 is still rejected");
+    // (upstream 2e97b33, tests/lower_depbar_test.cpp: a DEPBAR without .LE, the set alone, is no work here either)
+    check((bool)Shader::Ampere::LowerToMaxwell(std::vector<Instruction>{{{0x791a, 0x0040, 0, 0}}, kExit}),
+          "DEPBAR without bit 47 (no .LE) lowers");
     check(!Shader::Ampere::LowerToMaxwell(std::vector<Instruction>{{{0x791a, 0x8000, 1, 0}}, kExit}),
           "DEPBAR with words[2] set is still rejected");
     check(!Shader::Ampere::LowerToMaxwell(std::vector<Instruction>{{{0x791a, 0x18000, 0, 0}}, kExit}),

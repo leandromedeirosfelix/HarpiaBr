@@ -36,11 +36,11 @@ marcados `(local)` são alterações desta versão.
 | Hookshot (base deste projeto) | todo o repositório | GPL-3.0-or-later, [LICENSE](LICENSE) |
 | Eden, suyu, Orchid | `gpu/` | GPL; origem em [gpu/PROVENANCE.md](gpu/PROVENANCE.md) |
 | Camada de sistema | `host/` | origem em [host/PROVENANCE.md](host/PROVENANCE.md) |
-| Sirit | `gpu/vk/sirit/` | [gpu/vk/sirit/LICENSE](gpu/vk/sirit/LICENSE) |
+| Sirit | `gpu/vk/sirit/` | BSD-3-Clause, o que os cabeçalhos dizem: [LICENSE.BSD-3-Clause](gpu/vk/sirit/LICENSE.BSD-3-Clause); origem e os textos AGPL/GPL do Eden em [PROVENANCE.md](gpu/vk/sirit/PROVENANCE.md) |
 | AMD FidelityFX Super Resolution 1 | `gpu/vk/shaders/ffx/`, `fsr_easu.comp`, `fsr_rcas.comp` | MIT, Advanced Micro Devices (cabeçalho dos arquivos) |
 | NVIDIA Image Scaling | `gpu/vk/shaders/nis/` | MIT, NVIDIA Corporation (cabeçalho dos arquivos) |
 | a64-kit | `third_party/a64-kit/` | [PROVENANCE.md](third_party/a64-kit/PROVENANCE.md), [NOTICE.TOTKPort.md](third_party/a64-kit/NOTICE.TOTKPort.md) |
-| zbic | `third_party/zbic/` | [LICENSE](third_party/zbic/LICENSE), [PROVENANCE.md](third_party/zbic/PROVENANCE.md) |
+| zbic (zstd com ZBIC; ferramenta separada, não ligada ao jogo) | `third_party/zbic/` | zstd: BSD-3-Clause ([LICENSE.zstd](third_party/zbic/LICENSE.zstd), a opção BSD da licença dupla BSD ou GPLv2); divsufsort: MIT (Yuta Mori), no próprio `zstd.c`; [PROVENANCE.md](third_party/zbic/PROVENANCE.md) |
 | Opus | `third_party/opus/` | [COPYING](third_party/opus/COPYING) |
 | SDL2 | `third_party/sdl2/` | [LICENSE.txt](third_party/sdl2/LICENSE.txt) |
 | stb_truetype (só na versão Linux) | `third_party/stb/` | domínio público ou MIT, [PROVENANCE.md](third_party/stb/PROVENANCE.md) |
@@ -54,3 +54,12 @@ of Time são marcas registradas da Nintendo.
 ## Textos das licenças
 
 Cópias dos textos citados nos cabeçalhos SPDX estão em [LICENSES/](LICENSES/README.md).
+
+## Arquivos sem cabeçalho próprio
+
+Os arquivos de `host/`, `nx2/` e `third_party/a64-kit/` que não trazem cabeçalho de licença vêm do Hookshot (NotRexed e
+colaboradores), que se declara GPL-3.0-or-later; estão cobertos pelo [LICENSE](LICENSE) da raiz. A Harpia integrou o
+Hookshot até o commit `a1b19a3` do seu ramo `upstream-next` (e antes até `b96b5bc`): são as bases do histórico.
+Os cabeçalhos de terceiros (Citra, Dolphin, PPSSPP, FasTC, Boost e outros em `gpu/third_party/suyu/`) foram mantidos
+como vieram; os textos das licenças estão em [LICENSES/](LICENSES/README.md).
+

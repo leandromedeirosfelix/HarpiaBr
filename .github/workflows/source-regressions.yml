@@ -21,6 +21,9 @@ on:
       - tests/test_framegen_gate.py
       - gpu/vk/vk_draw.cpp
       - tests/test_table_track.py
+      - tests/test_host_shader_sources.py
+      - gpu/vk/host_shaders/**
+      - gpu/vk/shaders/**
       - .github/workflows/source-regressions.yml
   pull_request:
     branches: [main]
@@ -42,6 +45,9 @@ on:
       - tests/test_framegen_gate.py
       - gpu/vk/vk_draw.cpp
       - tests/test_table_track.py
+      - tests/test_host_shader_sources.py
+      - gpu/vk/host_shaders/**
+      - gpu/vk/shaders/**
       - .github/workflows/source-regressions.yml
   workflow_dispatch:
 
@@ -106,6 +112,8 @@ jobs:
           "%pythonLocation%\python.exe" -I -B tests/test_cpp_preflight.py --cxx clang++
       - name: Check a failed step's error line
         run: python -I -B tests/test_failure_reason.py
+      - name: Check every SPIR-V header has its GLSL source
+        run: python -I -B tests/test_host_shader_sources.py
       - name: C++ compiler for the import-hold check
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y g++

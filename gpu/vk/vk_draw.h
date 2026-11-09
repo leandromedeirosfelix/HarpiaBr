@@ -12,6 +12,7 @@ void descriptors_disturbed();
 
 #include "vk_internal.h"
 #include "vk_state.h"
+#include "vk_replay_state.h"
 
 namespace mkwvk {
 
@@ -32,17 +33,19 @@ struct DrawArgs {
 
 /// A recording starts (its slot's descriptor pool and upload stream are reset); value: the timeline value it signals
 void draw_begin_recording(int slot, VkCommandBuffer cmd, uint64_t value);
+/// The recording's stream still holds [at, at + n) in the mapping at base (a reset starts used over)
+bool stream_holds(const uint8_t* base, uint64_t at, uint64_t n);
 /// The open render pass ends (before transfers, clears, barriers and the recording's end)
 void end_pass(VkCommandBuffer cmd);
-void draw(VkCommandBuffer cmd, NvnState& s, const DrawArgs& d);
+void draw(VkCommandBuffer cmd, ReplayState& s, const DrawArgs& d);
 /// Clears of the bound targets, inside the open pass (NOP_CLEAR_COLOR, NOP_CLEAR_DS)
 void clear_color_target(VkCommandBuffer cmd, NvnState& s, int index, const float rgba[4], uint32_t mask);
 void clear_depth_stencil(VkCommandBuffer cmd, NvnState& s, float depth, bool depth_mask, uint32_t stencil,
                          uint32_t stencil_mask);
 void clear_stats(int64_t* clears, int64_t* masked);
 /// indirect: the workgroup counts' GPU address (x, y, z unused)
-void dispatch(VkCommandBuffer cmd, NvnState& s, uint32_t x, uint32_t y, uint32_t z, uint64_t indirect);
-void dry_mark_written(NvnState& s, bool compute, bool first);   // (hookshot: the parallel replay's dry pass)
+void dispatch(VkCommandBuffer cmd, ReplayState& s, uint32_t x, uint32_t y, uint32_t z, uint64_t indirect);
+void dry_mark_written(ReplayState& s, bool compute, bool first);   // (hookshot: the parallel replay's dry pass)
 void draw_stats(int64_t* draws, int64_t* skipped, int64_t* dispatches, int64_t* pipelines);
 void draw_stats2(int64_t* passes, int64_t* mesh, double* pipeline_ms);
 void draw_stats3(int64_t* pending_skips, int64_t* waits, double* wait_ms);

@@ -14,6 +14,7 @@
 
 #include "vk_internal.h"
 #include "vk_state.h"
+#include "vk_replay_state.h"
 
 namespace mkwvk {
 
@@ -46,7 +47,9 @@ struct Program {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     std::vector<VkDescriptorType> binding_types;   // by binding (what each descriptor write is)
     VkPipeline compute_pipeline = VK_NULL_HANDLE;
-    bool push = false;              // its set is pushed (VK_KHR_push_descriptor)
+    // (the compute pipeline's build: 0 not started, 1 on a worker, 2 done (compute_pipeline made, or failed): vk_draw.cpp dispatch)
+    std::atomic<int> compute_state{0};
+    bool push = false;             // its set is pushed (VK_KHR_push_descriptor)
     VkShaderStageFlags push_stages = 0;
     bool uses_render_area = false;
     bool uses_push = true;   // (a stage reads the push constants: render area or rescaling)
@@ -60,6 +63,7 @@ struct Program {
     };
     std::vector<Answer> answers;
     uint64_t variant = 0;   // (a hash of the answers: key alone names all the variants of these stages)
+    mutable std::atomic<int64_t> wm_sig{-1};   // (hookshot: what its write masks are made from, vk_draw.cpp program_wm_sig; -1: not asked yet)
 };
 
 enum class ProgramKind { Graphics, Compute, Mesh };
@@ -67,7 +71,9 @@ enum class ProgramKind { Graphics, Compute, Mesh };
 /// The program variant for the bound state (translated at first use; null when it does not translate).
 /// color_types: the attachments' Shader::AttributeType (Float / SignedInt / UnsignedInt), for the fragment outputs.
 /// Graphics programs may come back not ready yet (translation queued): the draw leaves itself out or program_wait()s.
-const Program* program_for(const NvnState& s, ProgramKind kind, const uint8_t color_types[8]);
+const Program* program_for(const ReplayState& s, ProgramKind kind, const uint8_t color_types[8]);
+/// program_for's last two picks forgotten (this thread's): at every recording's start (draw_begin_recording)
+void program_fast_reset();
 uint64_t compute_code_key(const NvnState& s);   // (hookshot) the bound compute program's code key, 0: none
 std::string program_textures(const NvnState& s, const Program& p);   // (hookshot, for logs)
 std::string program_code_keys(const NvnState& s);   // (hookshot) " stage:key" for each of the bound program's codes

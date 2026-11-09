@@ -1,3 +1,5 @@
+> Reproduzido sem alterações do TOTKPort/Hookshot; os caminhos e links abaixo se referem àquela árvore. O que existe aqui está em [PROVENANCE.md](PROVENANCE.md). / Reproduced verbatim from TOTKPort/Hookshot; paths and links refer to that tree; see PROVENANCE.md for what is here.
+
 # Third-party code
 
 Rexcomp and the AArch64 kit are by NotRexed. This repository includes:

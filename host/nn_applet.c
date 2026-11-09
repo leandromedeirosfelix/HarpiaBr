@@ -2,6 +2,7 @@
    The answers describe a docked console in English (HOS_LANGUAGE / language.txt: another language) with one user,
    "Player". */
 #include "hos.h"
+#include "hos_paths.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -33,7 +34,7 @@ static const char *desired_language(void) {
     } else {
         char path[300] = "language.txt";
 #if !defined(__EMSCRIPTEN__)   /* (linux too: host/posix) */
-        DWORD n = GetModuleFileNameA(NULL, path, 260);
+        DWORD n = hos_game_path_a(path, 260);
         while (n > 0 && path[n - 1] != 92 && path[n - 1] != 47) n--;
         snprintf(path + n, sizeof path - n, "language.txt");
 #endif
@@ -72,7 +73,7 @@ static const char *desired_language(void) {
     snprintf(lang, sizeof lang, "en-US");
     int found = 0;
     for (size_t i = 0; want[0] && i < sizeof languages / sizeof *languages; i++)
-        if (!strcmp(want, languages[i].code)) snprintf(lang, sizeof lang, "%s", languages[i].code), found = 1;
+        if (!_stricmp(want, languages[i].code)) snprintf(lang, sizeof lang, "%s", languages[i].code), found = 1;   /* (HOS_LANGUAGE=pt-br too, as language.txt) */
     if (want[0] && !found) hos_log("oe: language \"%s\" (%s) is not one the game has: English (US)", want, from);
     else hos_log("oe: language %s (%s)", lang, from);
     return lang;
@@ -85,7 +86,7 @@ HLE(_ZN2nn2oe18GetDesiredLanguageEv) {
 /* (hookshot) an integer of the Insert menu's harpia_options.ini beside the exe (gpu/vk/vk_menu.cpp), else dflt */
 static int menu_option(const char *key, int dflt) {
     char path[MAX_PATH];
-    const DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+    const DWORD n = hos_game_path_a(path, MAX_PATH);   /* (the game folder's, not bin's: host/hos_paths.h) */
     char *slash = n ? (strrchr(path, 92) ? strrchr(path, 92) : strrchr(path, 47)) : NULL;   /* (linux: '/') */
     if (!slash) return dflt;
     snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "harpia_options.ini");

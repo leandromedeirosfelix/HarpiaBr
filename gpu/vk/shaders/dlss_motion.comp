@@ -1,0 +1,24 @@
+#version 450
+// (hookshot) DLSS's motion vectors (vk_dlss.cpp): OoT has none (DLSS-GATE.md 2.4), so the scene depth is reprojected into
+// the last frame's clip space with the camera's two view-projections (vertex c3 +0x30 and +0x180). Camera motion only:
+// what animates on its own ghosts. Pixels toward the last frame's position; DLSS's mvecScale is 1 / size.
+// After Lichii's ocarina_camera_motion.comp (GPL-3.0-or-later): an unjittered scene, [-1, 1] clip depth, a negative viewport height.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D depth;
+layout(binding = 1, rg16f) uniform writeonly image2D motion;
+layout(push_constant, row_major) uniform P { mat4 clip_to_prev; } pc;
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    const ivec2 size = imageSize(motion);
+    if (any(greaterThanEqual(g, size))) return;
+    const float d = texelFetch(depth, g, 0).r;
+    const vec2 uv = (vec2(g) + 0.5) / vec2(size);
+    const vec4 clip = vec4(uv * vec2(2.0, -2.0) + vec2(-1.0, 1.0), d * 2.0 - 1.0, 1.0);
+    const vec4 prev = pc.clip_to_prev * clip;
+    vec2 px = vec2(0.0);
+    if (d >= 0.0 && d <= 1.0 && prev.w > 1e-6) {
+        const vec2 moved = (prev.xy / prev.w - clip.xy) * vec2(0.5, -0.5) * vec2(size);
+        if (all(lessThanEqual(abs(moved), vec2(65504.0)))) px = moved;
+    }
+    imageStore(motion, g, vec4(px, 0.0, 0.0));
+}

@@ -21,7 +21,7 @@ Hookshot contributors who sent fixes (as named by the original project): klimovi
 |---|---|---|
 | **[Eden](https://git.eden-emu.dev/eden-emu/eden)** and **Eglantine** | The shader recompiler (`gpu/vk/eden/`) and the work of lowering the Switch 2's Ampere shaders to Maxwell | GPL-3.0-or-later |
 | **yuzu / suyu** | Shader recompiler, graphics decoders and the AArch64-to-C translator (`gpu/third_party/suyu/`, `third_party/a64-kit/lift/suyu/`) | GPL-2.0-or-later / GPL-3.0-or-later per file |
-| **Sirit** | SPIR-V generator used by the recompiler (`gpu/vk/sirit/`) | licence in its own folder |
+| **Sirit** (ReinUsesLisp; Eden's fork) | SPIR-V generator used by the recompiler (`gpu/vk/sirit/`) | BSD-3-Clause (`LICENSE.BSD-3-Clause`; Eden added AGPL/GPL texts, see `PROVENANCE.md`) |
 | **Mesa (NAK)** | Reference for the Ampere instruction encoding | reference only |
 | **Vulkan Memory Allocator** (AMD) | Video memory allocation; fetched during the build | MIT |
 | **AMD FidelityFX Super Resolution 1** | The FSR 1 upscaler (`gpu/vk/shaders/ffx/`) | MIT, Advanced Micro Devices |
@@ -57,7 +57,7 @@ The headers of these files name, and we keep: Citra Emulator Project, Dolphin Em
 |---|---|---|
 | **[SDL2](https://www.libsdl.org)** | Window, audio and controllers (`third_party/sdl2/`) | zlib |
 | **[Opus](https://opus-codec.org)** 1.5.2 | Audio | BSD-3-Clause (`third_party/opus/COPYING`) |
-| **zbic** (kinnay) / **Atmosphere-NX** | Decompressing the game's modules; a separate tool, not linked into the game | zstd: BSD or GPLv2; ZBIC: GPLv2 |
+| **zbic** (kinnay) / **Atmosphere-NX** | Decompressing the game's modules; a separate tool, not linked into the game | zstd and the ZBIC code (hexkyz): BSD or GPLv2, used under BSD-3-Clause; divsufsort (Yuta Mori): MIT |
 | **zstd** | Decoding | BSD or GPLv2 |
 | **stb_truetype** (Sean Barrett) | Menu text in the Linux version | public domain or MIT |
 | **wgpu-native**, **FFmpeg**, **dav1d**, **Vulkan / SPIR-V Headers** | Fetched or used at build time, with their own licences | MIT/Apache-2.0, LGPL, BSD-2, Apache-2.0 |

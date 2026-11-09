@@ -371,6 +371,8 @@ void a64_svc(Ctx *c, uint32_t imm) {
     case 0x07:   /* ExitProcess */
         hos_log("svcExitProcess");
         hos_log_flush();
+        /* (hookshot) with DLSS Frame Generation loaded, no DLL unloading: as display.c's WM_CLOSE (nvngx_dlssg.dll faulted) */
+        if (GetModuleHandleA("sl.dlss_g.dll")) TerminateProcess(GetCurrentProcess(), 0);
         ExitProcess(0);
         return;
     case 0x0C: { /* GetThreadPriority(-, handle) -> (result, priority) */
@@ -464,8 +466,11 @@ void a64_svc(Ctx *c, uint32_t imm) {
     case 0x2D:   /* UnmapPhysicalMemory(address, size): the pages read as zero if mapped again */
         {   /* (pages under a Vulkan import stay committed, zeroed: hos_mem.c FreeMemoryPages) */
             extern int rx_guest_imported(uint64_t lo, uint64_t hi);
-            if (rx_guest_imported(c->x[0], c->x[0] + c->x[1])) memset(GP(c->x[0]), 0, (size_t)c->x[1]);
-            else VirtualFree(GP(c->x[0]), (SIZE_T)c->x[1], MEM_DECOMMIT);
+            /* (2: decommitted by the back end already. Size 0: nothing, as hos_mem.c for an empty range; VirtualFree with
+               0 would decommit the whole region at a region's base) */
+            const int imp = c->x[1] ? rx_guest_imported(c->x[0], c->x[0] + c->x[1]) : 2;
+            if (imp == 1) memset(GP(c->x[0]), 0, (size_t)c->x[1]);
+            else if (imp == 0) VirtualFree(GP(c->x[0]), (SIZE_T)c->x[1], MEM_DECOMMIT);
         }
         c->x[0] = R_OK;
         return;

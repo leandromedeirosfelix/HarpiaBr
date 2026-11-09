@@ -21,7 +21,7 @@ Colaboradores do Hookshot que enviaram correções (citados no projeto original)
 |---|---|---|
 | **[Eden](https://git.eden-emu.dev/eden-emu/eden)** e **Eglantine** | O recompilador de shaders (`gpu/vk/eden/`) e o trabalho de rebaixar shaders Ampere do Switch 2 para Maxwell | GPL-3.0-or-later |
 | **yuzu / suyu** | Recompilador de shaders, decodificadores gráficos e o tradutor AArch64 para C (`gpu/third_party/suyu/`, `third_party/a64-kit/lift/suyu/`) | GPL-2.0-or-later / GPL-3.0-or-later por arquivo |
-| **Sirit** | Gerador de SPIR-V usado pelo recompilador (`gpu/vk/sirit/`) | licença na própria pasta |
+| **Sirit** (ReinUsesLisp; fork do Eden) | Gerador de SPIR-V usado pelo recompilador (`gpu/vk/sirit/`) | BSD-3-Clause (`LICENSE.BSD-3-Clause`; o Eden acrescentou textos AGPL/GPL, veja `PROVENANCE.md`) |
 | **Mesa (NAK)** | Referência da codificação de instruções Ampere | consulta de referência |
 | **Vulkan Memory Allocator** (AMD) | Alocação de memória de vídeo; baixado na compilação | MIT |
 | **AMD FidelityFX Super Resolution 1** | Ampliador FSR 1 (`gpu/vk/shaders/ffx/`) | MIT, Advanced Micro Devices |
@@ -57,7 +57,7 @@ Os cabeçalhos desses arquivos citam, e nós mantemos: Citra Emulator Project, D
 |---|---|---|
 | **[SDL2](https://www.libsdl.org)** | Janela, áudio e controles (`third_party/sdl2/`) | zlib |
 | **[Opus](https://opus-codec.org)** 1.5.2 | Áudio | BSD-3-Clause (`third_party/opus/COPYING`) |
-| **zbic** (kinnay) / **Atmosphere-NX** | Descompressão dos módulos do jogo; ferramenta separada, não ligada ao jogo | zstd: BSD ou GPLv2; ZBIC: GPLv2 |
+| **zbic** (kinnay) / **Atmosphere-NX** | Descompressão dos módulos do jogo; ferramenta separada, não ligada ao jogo | zstd e o código ZBIC (hexkyz): BSD ou GPLv2, usado sob a BSD-3-Clause; divsufsort (Yuta Mori): MIT |
 | **zstd** | Decodificação | BSD ou GPLv2 |
 | **stb_truetype** (Sean Barrett) | Texto no menu da versão Linux | domínio público ou MIT |
 | **wgpu-native**, **FFmpeg**, **dav1d**, **Vulkan / SPIR-V Headers** | Baixados ou usados na compilação, com as suas próprias licenças | MIT/Apache-2.0, LGPL, BSD-2, Apache-2.0 |

@@ -1,0 +1,13 @@
+#version 450
+// (hookshot) DLSS's colour input (vk_dlss.cpp): OoT's upscale network's input, the tonemapped scene in RGB9E5 that 6637ac1d
+// wrote, sampled through its view (the square root of the colour, the network's perceptual encoding: DLSS runs in LDR on it,
+// as Lichii's ocarina_dlss_color.comp does) into an RGBA16F image DLSS can read. DLSS-GATE.md 2.2.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(binding = 1, rgba16f) uniform writeonly image2D dst;
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, imageSize(dst)))) return;
+    const vec3 c = texelFetch(src, g, 0).rgb;
+    imageStore(dst, g, vec4(mix(c, vec3(0.0), bvec3(isnan(c.r) || isinf(c.r), isnan(c.g) || isinf(c.g), isnan(c.b) || isinf(c.b))), 1.0));
+}

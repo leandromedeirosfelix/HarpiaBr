@@ -1,0 +1,12 @@
+#version 450
+// (hookshot) DLSS-G's depth (vk_dlss.cpp): the scene's D32 copied into an image of ours, so what DLSS-G reads at the present
+// never depends on how long the game keeps its own depth texture (one it releases is destroyed once the frame's work is done,
+// before the present's).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(binding = 1, r32f) uniform writeonly image2D dst;
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, imageSize(dst)))) return;
+    imageStore(dst, g, vec4(texelFetch(src, g, 0).r, 0.0, 0.0, 0.0));
+}

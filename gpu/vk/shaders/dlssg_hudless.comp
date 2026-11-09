@@ -1,0 +1,24 @@
+#version 450
+// (hookshot) DLSS-G's HUD-less colour (vk_dlss.cpp), at the window's size as the back buffer: the colour before the HUD as the
+// game's final pass makes it (b7914ae65792d0c8 writes an sRGB view of the presented RGBA8 texture, exposure 1.0: its output is
+// the sRGB encoding of its input to half a step, the 2.5K capture hudcap1), where present_image puts the picture; black bars.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;   // (linear, filtered: the picture's size to the window's, as the blit)
+layout(binding = 1, rgba8) uniform writeonly image2D dst;
+layout(push_constant) uniform P {
+    vec4 rect;   // (the picture in the window: x, y, width, height in pixels)
+    vec4 uv;     // (its crop of the source: u, v, width, height, 0 to 1)
+    vec4 pad;
+} pc;
+vec3 srgb(vec3 x) {
+    x = clamp(x, 0.0, 1.0);
+    return mix(12.92 * x, 1.055 * pow(x, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), x));
+}
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, imageSize(dst)))) return;
+    const vec2 p = (vec2(g) + 0.5 - pc.rect.xy) / pc.rect.zw;
+    vec3 c = vec3(0.0);
+    if (all(greaterThanEqual(p, vec2(0.0))) && all(lessThan(p, vec2(1.0)))) c = srgb(texture(src, pc.uv.xy + p * pc.uv.zw).rgb);
+    imageStore(dst, g, vec4(c, 1.0));
+}

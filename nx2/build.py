@@ -20,6 +20,8 @@ and is not compiled twice.
 
 Usage:  python -I nx2/build.py [--jobs 1] [--only 0,7] [--opt O1] [--no-polls] [--dll] [--lib] [--standalone]
   --only: just these code_NNN.c chunks (to measure); --dll: link harpia_game.dll; --lib: archive harpia_game.lib
+  HARPIA_TIMES=<build_times.json>: make_game.py's record of the earlier builds. With it, this run says which files it
+  really rebuilds and how long each took before (@@plan, @@file, @@eta), which the builder windows show as a countdown.
 """
 import argparse
 import concurrent.futures
@@ -35,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # (python -I le
 import kit
 import rtgen
 import toolchain
+import version
 
 NX2_RT = os.path.join(kit.HERE, "rt")
 HOST = os.path.join(kit.HERE, "..", "host")
@@ -48,7 +51,7 @@ PGO = os.environ.get("RX_PGO", "")
 # (host/posix: its windows.h is found first), the window and sound on SDL2. HARPIA_SYSROOT=<dir>: compile and link
 # against that root (the AppImage's: glibc 2.35, so the game runs on older systems than the one that built it).
 # HARPIA_VK_PREBUILT=<harpia_vk.so>: the Vulkan back end as built already (the AppImage's), not compiled here.
-LINUX = os.name != "nt"
+LINUX = not toolchain.windows()   # (hookshot: RX_TARGET=windows on Linux builds the Windows game, with llvm-mingw)
 POSIX = os.path.join(kit.HERE, "..", "host", "posix")
 SYSROOT = os.environ.get("HARPIA_SYSROOT", "")
 EXE = "harpia" if LINUX else "harpia.exe"
@@ -83,7 +86,7 @@ def HOT_ORDER():
         return []
     if LINUX:
         return ["-Wl,--symbol-ordering-file=" + p, "-Wl,--no-warn-symbol-ordering"]
-    return ["-Wl,/order:@" + p.replace("\\", "/"), "-Wl,/ignore:4037"]
+    return [toolchain.link_opt("/order:@" + p.replace("\\", "/")), toolchain.link_opt("/ignore:4037")]
 
 
 HOST_LIBS = ["-lpthread", "-ldl", "-lm"] if LINUX else \
@@ -145,10 +148,11 @@ def vk_sources():
 
 
 def cpm_dirs():
-    """Eden's CPM package caches, read only: RX_CPM, this project's work/eg clone, mkw-recomp's, the shared
-    Eglantine checkout's (Vulkan and SPIR-V headers, VMA, FFmpeg)"""
+    """CPM packages: RX_CPM, packaged tools/cpm, then legacy project caches.
+    The packages provide Vulkan and SPIR-V headers, VMA and FFmpeg."""
     eden_ns2 = os.path.dirname(kit.ROOT)
-    return [d for d in (os.environ.get("RX_CPM"), os.path.join(kit.WORK, "eg", ".cache", "cpm"),
+    return [d for d in (os.environ.get("RX_CPM"), os.path.join(kit.ROOT, "cpm"),
+                        os.path.join(kit.WORK, "eg", ".cache", "cpm"),
                         os.path.join(eden_ns2, "mkw-recomp", "work", "eg", ".cache", "cpm"),
                         os.path.join(eden_ns2, "Eglantine", ".cache", "cpm")) if d and os.path.isdir(d)]
 
@@ -175,8 +179,140 @@ def cache_put(obj, key):
         shutil.copyfile(obj, dst)
 
 
+def free_mb():
+    """The memory free now (MemAvailable on Linux, the available physical memory on Windows), in MB; None: not known"""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("len", ctypes.c_uint32), ("load", ctypes.c_uint32)] + \
+                           [(f, ctypes.c_uint64) for f in ("total", "avail", "pt", "pa", "vt", "va", "ve")]
+            m = MS()
+            m.len = ctypes.sizeof(MS)
+            return m.avail >> 20 if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)) else None
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) >> 10
+    except (OSError, ValueError, AttributeError):
+        return None
+    return None
+
+
+def tree_rss(pid):
+    """(linux) The resident bytes of a process and the processes it started (a driver that runs its compiler as a child, or ccache)"""
+    with open("/proc/%d/statm" % pid) as f:
+        n = int(f.read().split()[1]) * os.sysconf("SC_PAGE_SIZE")
+    for task in os.listdir("/proc/%d/task" % pid):
+        try:
+            with open("/proc/%d/task/%s/children" % (pid, task)) as f:
+                for child in f.read().split():
+                    try:
+                        n += tree_rss(int(child))
+                    except (OSError, ValueError, IndexError):
+                        pass
+        except OSError:
+            pass
+    return n
+
+
+def rss_mb(proc):
+    """A running compiler's resident memory in MB (0: not known, or not started yet)"""
+    if proc is None:
+        return 0
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class PMC(ctypes.Structure):
+                _fields_ = [("cb", ctypes.c_uint32), ("faults", ctypes.c_uint32)] + \
+                           [(f, ctypes.c_size_t) for f in ("peak_ws", "ws", "qpp", "qp", "qnpp", "qnp", "pf", "peak_pf")]
+            c = PMC()
+            c.cb = ctypes.sizeof(PMC)
+            ok = ctypes.WinDLL("psapi").GetProcessMemoryInfo(ctypes.c_void_p(int(proc._handle)), ctypes.byref(c), c.cb)
+            return c.ws >> 20 if ok else 0
+        return tree_rss(proc.pid) >> 20
+    except (OSError, ValueError, AttributeError, IndexError):
+        return 0
+
+
+def mem_need(src):
+    """What compiling a file takes at its peak, in MB, a little over. Measured on a cold build (clang 23, x86-64): a chunk of lifted
+    code 0.4 GB + 50 MB per MB of C + 250 MB per MB of its largest function (1.5 GB for 24 MB of small functions, 2.2 GB for a 6 MB
+    function alone); a hot piece 0.8-1.3 GB whatever its size (-O2, the profile, inlining); the runtime's C files ~0.2 GB, the C++
+    files up to ~1 GB"""
+    name = os.path.basename(src)
+    if name.startswith("code_hot"):
+        return 1500
+    if name.startswith("code_"):
+        with open(src, "rb") as f:
+            text = f.read()
+        starts, at = [], text.find(b"\nvoid f_")
+        while at >= 0:
+            if text.endswith(b"{", 0, text.find(b"\n", at + 1)):   # (a definition, not one of the declarations above them)
+                starts.append(at)
+            at = text.find(b"\nvoid f_", at + 1)
+        starts.append(len(text))
+        largest = max([b - a for a, b in zip(starts, starts[1:])] or [0])
+        return int(400 + 50 * len(text) / (1 << 20) + 250 * largest / (1 << 20))
+    return 1000 if src.endswith(".cpp") else 400
+
+
+class MemoryGate:
+    """(issue 418) Compilers started by the memory there is, not only by --jobs: one per CPU thread ran PCs out of memory (the kernel
+    stopped a compiler, or the whole build), and a count low enough for the biggest files and the PC's other programs left most of
+    the threads idle. A compile starts when the memory free, less what the compilers running may still take on top of what they
+    hold now (mem_need), keeps its own need and HARPIA_MEM_RESERVE_GB (default 1.5) free. The floor is make_game's before this:
+    on Windows up to 4 (half the threads on smaller CPUs) always run, as Windows pages rather than fails (issues 502, 503, 511: 1-2
+    compilers on 16 GB PCs took hours); on Linux one (issue 531: Linux stops a compiler that does not fit, and it is compiled again
+    alone). The free memory is read again as compiles start and end, so a game or browser opened during the build makes later
+    compiles wait"""
+
+    def __init__(self):
+        import threading
+        self.cv = threading.Condition()
+        self.running = {}   # (src: [need, Popen or None])
+        self.reserve = float(os.environ.get("HARPIA_MEM_RESERVE_GB") or 1.5) * 1024
+        self.floor = max(1, min(4, (os.cpu_count() or 2) // 2)) if os.name == "nt" else 1
+
+    def enter(self, src):
+        need = mem_need(src)
+        with self.cv:
+            while len(self.running) >= self.floor:
+                free = free_mb()
+                if free is None:
+                    break
+                owed = sum(max(0, n - rss_mb(p)) for n, p in self.running.values())
+                if free - owed - self.reserve >= need:
+                    break
+                self.cv.wait(1.0)
+            self.running[src] = [need, None]
+
+    def started(self, src, proc):
+        with self.cv:
+            self.running[src][1] = proc
+
+    def expected(self, jobs):
+        """How many compilers the memory free now is likely to hold at once (a 1.5 GB file each, the median chunk's peak),
+        between the floor and the jobs: the compile countdown's estimate"""
+        free = free_mb()
+        if free is None:
+            return jobs
+        return max(self.floor, min(jobs, int((free - self.reserve) // 1500)))
+
+    def leave(self, src):
+        with self.cv:
+            self.running.pop(src, None)
+            self.cv.notify_all()
+
+
+GATE = None   # (main's MemoryGate; None: compiles start as the jobs allow)
+
+
 FFMPEG = next((os.path.join(d, n) for d in [os.path.join(r, "ffmpeg") for r in cpm_dirs()] if os.path.isdir(d)
-               for n in sorted(os.listdir(d)) if os.path.isdir(os.path.join(d, n, "lib"))), None)
+               for n in sorted(os.listdir(d)) if os.path.isdir(os.path.join(d, n, "lib"))
+               and "linux" not in n.lower()), None)   # (hookshot: a cache with both systems' builds, cross-building)
 FFMPEG_LIBS = ("avcodec", "swscale", "swresample", "avutil")
 
 
@@ -231,7 +367,19 @@ WRITE_TRACK = [] if os.environ.get("RX_SOFT_WRITE_WATCH") == "0" else ["-DA64_WR
 # MOVBE; Haswell and Zen 1 on). With FMA the FPX1 fast paths cover double-precision FMA (RECOMP_FPX_FMA64; it took
 # the exact software body on baseline x86-64) and the bit counts are single instructions. No contraction, so a C
 # expression is rounded as written (the exact bodies and FPX1's proofs assume it). RX_MARCH=x86-64: the old baseline
-CPU = ["-march=" + os.environ.get("RX_MARCH", "x86-64-v3"), "-ffp-contract=off"]
+# (issue 363: a Xeon E5-2667 v2 (Ivy Bridge, no AVX2) built the game and then stopped at its first AVX2 instruction,
+# 0xc000001d. The game is built on the PC it runs on: a CPU without x86-64-v3's features gets x86-64-v2, or x86-64)
+from host_cpu import host_march   # (make_game.py asks it too: the AppImage's renderer)
+
+MARCH = os.environ.get("RX_MARCH") or host_march()
+if MARCH != "x86-64-v3":
+    print("build: this CPU has no AVX2: the game is built for %s (a little slower)" % MARCH, flush=True)
+# (local: Harpia) the source and work folders' paths in the objects (__FILE__, debug info) as "harpia" and "work": the same
+# commit builds the same bytes in any folder and on any PC (a player's build equals the release's), and no player's user
+# name (%LOCALAPPDATA%) goes into the game. The work folder's map last: it may sit inside the source folder, and the last
+# match wins. flag_text keys both as <root> and <work>, so the object cache is shared as before
+PREFIX_MAP = ["-ffile-prefix-map=%s=harpia" % kit.ROOT, "-ffile-prefix-map=%s=work" % os.path.abspath(kit.WORK)]
+CPU = ["-march=" + MARCH, "-ffp-contract=off"] + PREFIX_MAP
 
 
 def flags(gen, rt64, opt, polls):
@@ -254,11 +402,83 @@ def write_info(out):
     return path
 
 
+def flag_text(fl):
+    """The flags an object key is named by. Include folders are left out (their headers are in deps). The builder's
+    own folder is <root> (issue 565: versions\\<tag>\\... made every update look new). --sysroot= is <sysroot>: the
+    AppImage mount is a new /tmp/.mount_... path every start, and that path is not a change in the headers."""
+    kept = []
+    for f in fl:
+        if f.startswith("-I"):
+            continue
+        if f.startswith("--sysroot="):
+            f = "--sysroot=<sysroot>"
+        else:
+            f = f.replace(os.path.abspath(kit.WORK), "<work>").replace(kit.ROOT, "<root>")
+        kept.append(f)
+    return " ".join(kept)
+
+
 def object_key(src, fl, deps):
-    """What an object depends on: its source, the flags without the include folders (the two builds' generated
-    headers are in different folders; their contents are in deps), and the headers"""
-    return hashlib.sha1(open(src, "rb").read() + " ".join(f for f in fl if not f.startswith("-I")).encode() +
-                        deps).hexdigest()
+    """What an object depends on: its source, the flags (flag_text), and the headers."""
+    return hashlib.sha1(open(src, "rb").read() + flag_text(fl).encode() + deps).hexdigest()
+
+
+def times_from(path):
+    """The seconds each module took on this PC, from make_game.py's build_times.json, or {} when there is no record to
+    use (a first build, one half written, or one another version of the tools wrote): the countdown then falls back to
+    the rate this PC's other measurements ran at."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(k): float(v) for k, v in data["seconds"].items()
+                if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return {}
+
+
+def eta_left(pending, jobs):
+    """How long the rest of the compile takes, in seconds, with this many compilers: the work spread over them, with
+    the longest file still left as the floor (each file is still one compiler)."""
+    if not pending:
+        return 0.0
+    return max(max(pending), sum(pending) / max(1, jobs))
+
+
+def per_file_seconds(jobs, history):
+    """One expected duration for each job, in order: the seconds this PC measured for that module before, or, for a
+    module it never compiled (a new release adds or renames files), the rate those measurements ran at. On a PC with
+    no measurements at all, the first build uses the rates a full build on the development PC showed."""
+    sizes = [max(0.0, os.path.getsize(src) / (1 << 20)) for _, src, *_ in jobs]
+    measured = [(history[os.path.basename(src)], mb) for (_, src, *_), mb in zip(jobs, sizes)
+                if os.path.basename(src) in history and mb > 0]
+    rate = sum(secs for secs, _ in measured) / sum(mb for _, mb in measured) if measured else None
+    out = []
+    for (_, src, *_), mb in zip(jobs, sizes):
+        name = os.path.basename(src)
+        if name in history:
+            out.append(max(0.05, history[name]))
+        elif rate is not None:
+            out.append(max(0.5, rate * mb))
+        else:   # (seconds per MB measured on a full build: the eight hot files, the game chunks, the rest)
+            out.append(23.5 * mb if name.startswith("code_hot") else 3.4 * mb + 1 if name.startswith("code_") else 1.3)
+    return out
+
+
+def plan_jobs(jobs):
+    """Which jobs this run really compiles, and every job's object key. A job whose object is stamped with its key, or
+    whose key is in the object cache (the other target's build), is only linked in: not work, and not in the countdown.
+    The keys go to compile_one, which then does not hash every source a second time."""
+    work, keys = [], {}
+    for cc, src, obj, fl, deps in jobs:
+        key = object_key(src, fl, deps)
+        keys[(src, obj)] = key
+        stamp = obj + ".sha1"
+        if os.path.exists(obj) and os.path.exists(stamp) and open(stamp).read() == key:
+            continue
+        if os.path.exists(os.path.join(OBJ_CACHE, key + ".o")):
+            continue
+        work.append((cc, src, obj, fl, deps))
+    return work, keys
 
 
 def migrate_stamps(gen, obj_dir, fl, deps):
@@ -283,9 +503,33 @@ def migrate_stamps(gen, obj_dir, fl, deps):
             cache_put(obj, key)
 
 
+PLANNED = {}   # (src, obj) -> the object key plan_jobs worked out, so compile_one does not hash every source again
+
+
+# (hookshot) the order of the compile: the longest first (LPT), so no long one starts late and runs alone at the end. The lift's
+# estimate (gen/chunk_costs.txt, nx2/chunks.py fn_cost: functions cost with the square of their size) where it is there, else the size.
+# HOT_COST: how much longer the hot flags (-O2, the profile, the hot callees inlined) take for the same estimate. Fitted to a cold build
+# on a Ryzen 9 7900X; by size alone the hot pieces (9 MB, up to 333 s) started after every 25 MB chunk (45 s)
+HOT_COST = 4
+
+
+def chunk_costs(gen):
+    try:
+        with open(os.path.join(gen, "chunk_costs.txt")) as f:
+            return {name: int(n) for name, _, n in (line.partition(" ") for line in f) if n.strip().isdigit()}
+    except OSError:
+        return {}
+
+
+def compile_cost(src, costs):
+    """A file's compile time, roughly (see HOT_COST)"""
+    name = os.path.basename(src)
+    return costs.get(name, os.path.getsize(src)) * (HOT_COST if name.startswith("code_hot") else 1)
+
+
 def compile_one(job):
     cc, src, obj, fl, deps = job
-    key = object_key(src, fl, deps)
+    key = PLANNED.get((src, obj)) or object_key(src, fl, deps)
     stamp = obj + ".sha1"
     if os.path.exists(obj) and os.path.exists(stamp) and open(stamp).read() == key:
         return src, 0.0, None
@@ -300,10 +544,18 @@ def compile_one(job):
             shutil.copyfile(cached, obj)
         open(stamp, "w").write(key)
         return src, 0.0, None
+    if GATE:
+        GATE.enter(src)
     t = time.time()
-    with subprocess.Popen([cc] + fl + ["-c", src, "-o", obj], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
-        no_throttle(getattr(p, "_handle", None))
-        out, err = p.communicate()
+    try:
+        with subprocess.Popen([cc] + fl + ["-c", src, "-o", obj], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as p:
+            no_throttle(getattr(p, "_handle", None))
+            if GATE:
+                GATE.started(src, p)
+            out, err = p.communicate()
+    finally:
+        if GATE:
+            GATE.leave(src)
     r = subprocess.CompletedProcess(p.args, p.returncode, out, err)
     if r.returncode:
         return src, time.time() - t, r.stderr[-4000:]
@@ -339,10 +591,15 @@ def translator_stamp(vk):
 def state_stamp(vk):
     """HARPIA_STATE_STAMP: the layout of what a pipeline note keeps (NvnState: vk_state.h, vk_api.h, and the NVN types its
     members are, ../render/rx_nvn.h and nvn_api.h), as translator_stamp"""
+    # (local: NvnState's members are vk_state.h's own and rx_nvn.h's / nvn_api.h's types; vk_api.h holds none of them, and a
+    # function declared in those headers changes no layout. Either changed the stamp and dropped every note a player had: a
+    # start with 0 notes compiled every pipeline in play (Harpia, 2026-11-08). Lines that declare a function are left out)
+    proto = re.compile(rb"^[A-Za-z_][\w \t\*]*\b[A-Za-z_]\w*\s*\([^;{]*\)\s*;\s*$", re.M)
     stamp = hashlib.sha1()
-    for n in ("vk_state.h", "vk_api.h", "../render/rx_nvn.h", "../render/nvn_api.h"):
+    for n in ("vk_state.h", "../render/rx_nvn.h", "../render/nvn_api.h"):
         with open(os.path.join(vk, *n.split("/")), "rb") as src:
-            stamp.update(translator_text(src.read()) + b"\0")
+            text = proto.sub(b"", translator_text(src.read()))
+            stamp.update(b"\n".join(line for line in text.split(b"\n") if line.strip()) + b"\0")   # (no blank lines left)
     return stamp.hexdigest()[:16]
 
 
@@ -367,6 +624,10 @@ def main():
     rt64 = rtgen.write(os.path.join(out, "rt64"))
     cc = toolchain.need(toolchain.find("clang"))
     fl = flags(gen, rt64, a.opt, not a.no_polls)
+    # (which Harpia this is, for the log's first line and the Insert menu: given to those two files only, so a new
+    # release name rebuilds them and nothing else)
+    stamp_def = version.define()
+    print("version: %s" % version.describe(), flush=True)
     # (the lifted chunks include only the guest model: the emulator ABI header is a dependency of the shim alone)
     deps = b"".join(open(os.path.join(d, f), "rb").read() for d in (gen, rt64) for f in sorted(os.listdir(d))
                     if f.endswith(".h"))
@@ -392,13 +653,14 @@ def main():
             host_srcs = sorted(os.path.join(HOST, f) for f in os.listdir(HOST) if f.endswith(".c") and (f != "pgo_rt.c" or PGO == "gen")
                                and not (LINUX and f in ("display.c", "mf_av1.c", "rx_nowgpu.c")) and (f != "rx_nowgpu.c" or not have_wgpu))
             if LINUX:   # (the window on SDL2, the Win32 calls on POSIX, no Media Foundation and no WebGPU renderer)
-                host_srcs += [os.path.join(POSIX, f) for f in ("win32_posix.c", "display_sdl.c", "linux_stubs.c")]
+                host_srcs += [os.path.join(POSIX, f) for f in ("win32_posix.c", "display_sdl.c", "linux_stubs.c", "prof.c")]
         else:
             srcs += [os.path.join(NX2_RT, "eden_shim.c"), write_info(out)]
     if os.environ.get("RX_VK_ONLY"):   # (no lift needed: the back end alone)
         srcs = [s for s in srcs if os.path.exists(s)]
-    # biggest first, so the long ones do not end up alone at the end
-    srcs.sort(key=lambda s: -os.path.getsize(s))
+    # the longest first, so the long ones do not end up alone at the end (compile_cost)
+    costs = chunk_costs(gen)
+    srcs.sort(key=lambda s: -compile_cost(s, costs))
     # (hookshot) code_hot.c, the lift's hot functions together (A64_HOT_FUNCS + A64_HOT_CHUNK=1): at RX_HOT_OPT
     # (default O2), so the hot callees inline into their hot callers
     hot_fl = [("-" + os.environ.get("RX_HOT_OPT", "O2")) if f == "-" + a.opt else f for f in fl]
@@ -407,10 +669,23 @@ def main():
     if PGO == "gen":
         hot_fl = [f if f != "-O2" else "-O1" for f in hot_fl] + ["-fprofile-instr-generate", "-mllvm", "-disable-vp=true"]
     elif PGO:
-        hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO]
+        # (the profile's contents in the flags the object key hashes: its path alone stays the same across releases, so an update with a
+        # new profile kept the hot code built from the old one)
+        with open(PGO, "rb") as f:
+            hot_fl = hot_fl + ["-fprofile-instr-use=" + PGO, "-DHARPIA_PROFILE_SHA1=" + hashlib.sha1(f.read()).hexdigest()[:16]]
     jobs = [(cc, s, os.path.join(obj_dir, os.path.basename(s)[:-2] + ".o"),
              hot_fl if os.path.basename(s).startswith("code_hot") else fl,
              shim_deps if os.path.dirname(s) == NX2_RT else deps) for s in srcs]
+    # (issue 624) what the game code's object keys are made of, as short fingerprints: two builds' logs side by side say which part
+    # changed when an update compiled everything again (the headers, the flags, the profile, or the lifted code itself)
+    fp = lambda b: hashlib.sha1(b).hexdigest()[:10]
+    norm = lambda f: flag_text(f).encode()
+    code = hashlib.sha1()
+    for code_src in sorted(x for x in srcs if os.path.basename(x).startswith("code_")):
+        code.update(os.path.basename(code_src).encode() + open(code_src, "rb").read())
+    print("object keys: game-code headers %s, flags %s, hot flags %s, lifted code %s (%d files)" % (
+        fp(deps), fp(norm(fl)), fp(norm(hot_fl)), code.hexdigest()[:10],
+        sum(1 for x in srcs if os.path.basename(x).startswith("code_"))), flush=True)
     # the runtime: ordinary C at -O2, with its own headers (any host/*.h change rebuilds all of it)
     host_fl = target() + CPU + (["-I" + POSIX, "-D_GNU_SOURCE"] if LINUX else []) + \
         ["-I" + HOST, "-I" + rt64, "-I" + gen, "-Wno-everything", "-O2", "-g0", "-mcx16", "-DA64_POLLING"] + WRITE_TRACK
@@ -423,7 +698,8 @@ def main():
     jobs += [(cc, s, os.path.join(obj_dir, "host_" + os.path.basename(s)[:-2] + ".o"),
               host_fl + ["-I" + os.path.join(OPUS, "include")] +
               (["-I" + os.path.join(FFMPEG, "include")] if FFMPEG else []) +
-              (FFMPEG_LX[0] if LINUX and FFMPEG_LX else []), host_deps) for s in host_srcs]
+              (FFMPEG_LX[0] if LINUX and FFMPEG_LX else []) +
+              ([stamp_def] if os.path.basename(s) == "hos_main.c" else []), host_deps) for s in host_srcs]
     # libopus 1.5.2 (third_party/opus, from TOTKPort): nn::codec's hardware Opus decoder (host/nn_codec.c)
     if host_srcs:
         oflags = target() + ["-O2", "-g0", "-Wno-everything", "-DOPUS_BUILD", "-DUSE_ALLOCA",
@@ -478,10 +754,23 @@ def main():
                                    os.path.join(GPU, "compat"))
         vdeps = tree_headers(vk, os.path.join(GPU, "render"), os.path.join(GPU, "compat"),
                              os.path.join(GPU, "third_party", "suyu", "video_core", "textures"))
+        # (hookshot) NVIDIA Streamline's headers (MIT) for vk_dlss.cpp alone, when present: RX_STREAMLINE_SDK, else the
+        # tools folder's copy. No NVIDIA library is linked or shipped; without them DLSS is built off.
+        bundled_sl = os.path.join(kit.HERE, "..", "third_party", "streamline")   # (the Builder package's copy: headers + licence)
+        # (local: Harpia) no machine-specific fallback: RX_STREAMLINE_SDK, or the package's copy, or DLSS is built off
+        sl_sdk = os.environ.get("RX_STREAMLINE_SDK") or bundled_sl
+        sl_flags = ["-DHARPIA_STREAMLINE=1", "-I" + os.path.join(sl_sdk, "include")] \
+            if not LINUX and os.path.isfile(os.path.join(sl_sdk, "include", "sl.h")) else []
+        if not sl_flags and not LINUX:
+            print("DLSS: no Streamline headers (set RX_STREAMLINE_SDK to an SDK folder with include/sl.h): built without DLSS", flush=True)
+        # (the SDK's headers in vk_dlss.o's key: an SDK update rebuilds it, as the include folder itself is not in the key)
+        sl_deps = vdeps + tree_headers(os.path.join(sl_sdk, "include")) if sl_flags else vdeps
         for src in vk_sources():
             name = os.path.relpath(src, vk).replace(os.sep, "_")[:-4]
             lib = os.path.relpath(src, vk).split(os.sep)[0] in ("eden", "sirit")
-            vk_jobs.append((cxx, src, os.path.join(obj_dir, "vk_" + name + ".o"), vflags, vk_lib_deps if lib else vdeps))
+            fl_src = vflags + ([stamp_def] if os.path.basename(src) == "vk_menu.cpp" else []) + (sl_flags if name == "vk_dlss" else [])
+            vk_jobs.append((cxx, src, os.path.join(obj_dir, "vk_" + name + ".o"), fl_src,
+                            vk_lib_deps if lib else sl_deps if name == "vk_dlss" else vdeps))
         if LINUX:   # (its own copy of the Win32 calls on POSIX, and the bit of GDI the Insert menu draws text with)
             cflags = target() + CPU + ["-fPIC", "-O2", "-g0", "-Wno-everything", "-D_GNU_SOURCE", "-I" + POSIX,
                                        "-I" + os.path.join(kit.HERE, "..", "third_party", "stb")]
@@ -492,25 +781,65 @@ def main():
     vk_only = bool(os.environ.get("RX_VK_ONLY"))   # (the renderer alone, the game's objects as they are)
     if vk_only:
         jobs = list(vk_jobs)
+    # (the builder's compile timer: HARPIA_TIMES is make_game.py's record of the earlier builds on this PC. With it,
+    # this run says which files it really rebuilds and how long each took before, and the builder shows the rest of the
+    # compile as a countdown that follows this PC's own measurements. Run by hand, it prints none of these lines.)
+    global GATE
+    GATE = None if os.environ.get("HARPIA_MEM_GATE") == "0" else MemoryGate()
+    eta_jobs = GATE.expected(a.jobs) if GATE else a.jobs   # (the countdown with the compilers the memory holds, not --jobs)
+    counted, expected, pending = os.environ.get("HARPIA_TIMES"), {}, []
+    if counted:
+        work_jobs, keys = plan_jobs(jobs)
+        PLANNED.update(keys)
+        estimate = per_file_seconds(work_jobs, times_from(counted))
+        pending = list(estimate)
+        for job, seconds in zip(work_jobs, estimate):
+            expected.setdefault(job[1], []).append(seconds)
+        print("@@plan %d %d" % (len(work_jobs), len(jobs)), flush=True)
+        print("@@eta %d" % eta_left(pending, eta_jobs), flush=True)
     print("%d files, %d jobs, %s" % (len(jobs), a.jobs, " ".join(f for f in fl if f.startswith("-D") or f.startswith("-O"))),
           flush=True)
-    t0, failed = time.time(), 0
+    t0, failed = time.time(), []
     with concurrent.futures.ThreadPoolExecutor(a.jobs) as ex:
         # (as each ends, not in order: the builder app shows progress from these lines, and the biggest file comes first)
         for src, secs, err in (f.result() for f in concurrent.futures.as_completed([ex.submit(compile_one, j) for j in jobs])):
             size = os.path.getsize(src) >> 20
             if err:
-                failed += 1
-                print("FAILED %s (%d MB, %.0fs):\n%s" % (os.path.basename(src), size, secs, err), flush=True)
+                failed.append(src)
+                print("not compiled yet: %s (%d MB, %.0fs), tried again alone at the end:\n%s"
+                      % (os.path.basename(src), size, secs, err[-1500:]), flush=True)
             else:
                 print("  %-16s %4d MB  %6.0fs  (%.0fs)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
-    print("compiled in %.0fs, %d failed" % (time.time() - t0, failed), flush=True)
-    if failed:
+            if counted:
+                print("@@file %s %.1f %s" % (os.path.basename(src), secs,
+                                             "failed" if err else "cached" if secs <= 0 else "new"), flush=True)
+                if not err and expected.get(src):
+                    pending.remove(expected[src].pop())
+                    print("@@eta %d" % eta_left(pending, eta_jobs), flush=True)
+    # (a compiler that ran out of memory beside the others dies "due to signal": a player's 24 MB code_021.c, 2026-11-08. The
+    # files that failed are compiled again one at a time, with all the memory, before the build gives up)
+    still = 0
+    for src in failed:
+        job = next(j for j in jobs if j[1] == src)
+        _, secs, err = compile_one(job)
+        size = os.path.getsize(src) >> 20
+        if err:
+            still += 1
+            print("FAILED %s (%d MB, %.0fs, alone too):\n%s" % (os.path.basename(src), size, secs, err), flush=True)
+        else:
+            print("  %-16s %4d MB  %6.0fs  (%.0fs, alone)" % (os.path.basename(src), size, secs, time.time() - t0), flush=True)
+        if counted:
+            print("@@file %s %.1f %s" % (os.path.basename(src), secs, "failed" if err else "again"), flush=True)
+            if not err and expected.get(src):
+                pending.remove(expected[src].pop())
+                print("@@eta %d" % eta_left(pending, eta_jobs), flush=True)
+    print("compiled in %.0fs, %d failed" % (time.time() - t0, still), flush=True)
+    if still:
         return 1
     vk_objs = {j[2] for j in vk_jobs}
     objs = [j[2] for j in jobs if j[2] not in vk_objs]
     rsp = os.path.join(out, "objs.rsp")
-    open(rsp, "w").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
+    open(rsp, "w", encoding="utf-8").write("\n".join('"%s"' % o.replace("\\", "/") for o in objs))
     if a.lib:
         lib = os.path.join(out, "harpia_game.lib")
         subprocess.run([toolchain.lld_link(), "/lib", "/out:" + lib, "@" + rsp], check=True)
@@ -538,13 +867,15 @@ def main():
         exe = os.path.join(out, "harpia.exe")   # (+ harpia.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = subprocess.run([cc] + toolchain.native_target() + toolchain.native_link() +
-                           ["-o", exe, "-Wl,/map:" + exe[:-4] + ".map", "-Wl,/stack:8388608", "@" + rsp] + HOT_ORDER() + HOST_LIBS +
-                           (["-Wl,/nodefaultlib:clang_rt.profile.lib"] if PGO == "gen" else []) +
+                           ["-o", exe, toolchain.link_opt("/map:" + exe[:-4] + ".map"), toolchain.link_opt("/stack:8388608"),
+                            toolchain.link_opt("/Brepro"), "@" + rsp] + HOT_ORDER() + HOST_LIBS +   # (/Brepro: no link time in the file)
+                           ([toolchain.link_opt("/nodefaultlib:clang_rt.profile.lib")] if PGO == "gen" else []) +
                            ([os.path.join(kit.WORK, "harpia.res")] if os.path.exists(os.path.join(kit.WORK, "harpia.res")) else []) +   # (nx2/make_icon.py)
-                           (["-Wl,/subsystem:windows,/entry:mainCRTStartup"] if os.environ.get("RX_RELEASE") == "1" else []) +   # (no console window)
+                           ([toolchain.link_opt("/subsystem:windows"), toolchain.link_opt("/entry:mainCRTStartup")] if os.environ.get("RX_RELEASE") == "1" else []) +   # (no console window)
                            ([os.path.join(WGPU, "lib", "wgpu_native.dll.lib")] if wgpu else []) +
                            ([os.path.join(FFMPEG, "lib", l + ".lib") for l in ("avcodec", "swscale", "swresample", "avutil")] +
-                            ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []),
+                            ["-lbcrypt", "-lmfplat", "-lmfuuid", "-lstrmiids", "-lole32"] if FFMPEG else []) +
+                           (["-lc++", "-lunwind"] if toolchain.mingw() else []),   # (llvm-mingw: the C++ parts' runtime, linked in; MSVC's comes by itself)
                            capture_output=True, text=True)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
         if r.returncode:
@@ -557,19 +888,32 @@ def main():
             dll, dst = os.path.join(WGPU, "lib", "wgpu_native.dll"), os.path.join(out, "wgpu_native.dll")
             if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(dll):
                 shutil.copyfile(dll, dst)
+        # (hookshot) a shared FFmpeg's DLLs beside it (an LGPL shared build, as cross builds find: the static one needs none)
+        for l in FFMPEG_LIBS if FFMPEG and os.path.isdir(os.path.join(FFMPEG, "bin")) else ():
+            import shutil
+            for f in os.listdir(os.path.join(FFMPEG, "bin")):
+                if f.startswith(l + "-") and f.endswith(".dll"):
+                    shutil.copyfile(os.path.join(FFMPEG, "bin", f), os.path.join(out, f))
         # (hookshot) SDL2.dll beside it: host/pad_sdl.c's controllers (DualSense, DualShock 4, Switch Pro ...)
         sdl = os.path.join(kit.HERE, "..", "third_party", "sdl2", "SDL2.dll")
         sdl_dst = os.path.join(out, "SDL2.dll")
         if os.path.exists(sdl) and (not os.path.exists(sdl_dst) or os.path.getsize(sdl_dst) != os.path.getsize(sdl)):
             import shutil
             shutil.copyfile(sdl, sdl_dst)
+        # (SDL2.dll is sdl2-compat: the SDL2 calls on SDL3, whose controller support is current (a Steam Controller user's
+        # report). It loads SDL3.dll from beside it)
+        sdl3 = os.path.join(kit.HERE, "..", "third_party", "sdl2", "SDL3.dll")
+        sdl3_dst = os.path.join(out, "SDL3.dll")
+        if os.path.exists(sdl3) and (not os.path.exists(sdl3_dst) or os.path.getsize(sdl3_dst) != os.path.getsize(sdl3)):
+            import shutil
+            shutil.copyfile(sdl3, sdl3_dst)
     if vk_prebuilt and a.standalone and not a.only:
         import shutil
         shutil.copyfile(vk_prebuilt, os.path.join(out, VK_LIB))
     if vk_jobs:   # (harpia_vk.dll beside the exe: loaded by host/rx_backend.c with RX_BACKEND=vulkan)
         vdll = os.path.join(out, VK_LIB)
         vrsp = os.path.join(out, "vk_objs.rsp")
-        open(vrsp, "w").write("\n".join('"%s"' % j[2].replace("\\", "/") for j in vk_jobs))
+        open(vrsp, "w", encoding="utf-8").write("\n".join('"%s"' % j[2].replace("\\", "/") for j in vk_jobs))
         t = time.time()
         if LINUX:   # (its C++ runtime inside: the game folder runs where the AppImage's sysroot is older than the system)
             link = [toolchain.need(toolchain.find("clang++"))] + target() + [
@@ -577,7 +921,8 @@ def main():
                 "-static-libstdc++", "-static-libgcc", "@" + vrsp, "-ldl", "-lpthread", "-lm"]
         else:
             link = [cc] + toolchain.native_target() + toolchain.native_link() + \
-                ["-shared", "-o", vdll, "-Wl,/map:" + vdll[:-4] + ".map", "@" + vrsp, "-luser32", "-lgdi32", "-lcabinet"]
+                ["-shared", "-o", vdll, toolchain.link_opt("/map:" + vdll[:-4] + ".map"), toolchain.link_opt("/Brepro"), "@" + vrsp, "-luser32", "-lgdi32",
+                 "-lcabinet"] + (["-lc++", "-lunwind"] if toolchain.mingw() else [])
         r = subprocess.run(link, capture_output=True, text=True)
         if r.returncode:
             undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
@@ -589,7 +934,7 @@ def main():
         dll = os.path.join(out, "harpia_game.dll")   # (+ harpia_game.map: crash offsets -> f_<guest address>)
         t = time.time()
         r = subprocess.run([cc] + toolchain.native_target() + toolchain.native_link() +
-                           ["-shared", "-o", dll, "-Wl,/map:" + dll[:-4] + ".map", "@" + rsp],
+                           ["-shared", "-o", dll, toolchain.link_opt("/map:" + dll[:-4] + ".map"), toolchain.link_opt("/Brepro"), "@" + rsp],
                            capture_output=True, text=True)
         undefined = sorted({l.strip() for l in (r.stdout + r.stderr).splitlines() if "undefined symbol" in l})
         if r.returncode:

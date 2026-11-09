@@ -141,7 +141,12 @@ static void discard_pages(uint64_t addr, uint64_t size) {
     if (!discard || discard(GP(lo), (SIZE_T)(hi - lo)) != ERROR_SUCCESS)
         VirtualAlloc(GP(lo), (SIZE_T)(hi - lo), MEM_RESET, PAGE_READWRITE);
 #elif !defined(__EMSCRIPTEN__)
-    madvise(GP(lo), (size_t)(hi - lo), MADV_DONTNEED);
+    extern int hos_posix_guest_discard(void *p, size_t n);   /* (hos_main.c: MADV_REMOVE on the memfd window) */
+    extern int rx_guest_imported(uint64_t lo, uint64_t hi);
+    /* (pages a dma-buf import holds stay where they are, zeroed: a hole punched under one would leave the GPU on
+       the old pages and the game on new ones) */
+    if (rx_guest_imported(lo, hi)) memset(GP(lo), 0, (size_t)(hi - lo));
+    else hos_posix_guest_discard(GP(lo), (size_t)(hi - lo));
 #endif
 }
 
@@ -282,11 +287,16 @@ HLE(_ZN2nn2os15FreeMemoryPagesEmm) {
         /* (pages the Vulkan back end imported, as part of a pool's 16 MB chunk, stay committed and are zeroed: the GPU
            still maps them, and decommitted pages under an import faulted the device. Read as zero, as freed pages) */
         extern int rx_guest_imported(uint64_t lo, uint64_t hi);
-        if (hi > lo && rx_guest_imported(lo, hi)) memset(GP(lo), 0, (size_t)(hi - lo));
+        /* (1 imported: zeroed; 2 decommitted by the back end under its lock, not again here: an import may own them now) */
+        const int imp = hi > lo ? rx_guest_imported(lo, hi) : 2;
+        if (imp == 1) memset(GP(lo), 0, (size_t)(hi - lo));
 #if defined(_WIN32)
-        else if (hi > lo) VirtualFree(GP(lo), (SIZE_T)(hi - lo), MEM_DECOMMIT);
+        else if (imp == 0) VirtualFree(GP(lo), (SIZE_T)(hi - lo), MEM_DECOMMIT);
 #else
-        else if (hi > lo) madvise(GP(lo), (size_t)(hi - lo), MADV_DONTNEED);   /* (linux: kept mapped, the pages read as zero) */
+        else if (imp == 0) {   /* (linux: kept mapped, the pages read as zero; MADV_REMOVE on the memfd window) */
+            extern int hos_posix_guest_discard(void *p, size_t n);
+            hos_posix_guest_discard(GP(lo), (size_t)(hi - lo));
+        }
 #endif
         RET(0);
         return;

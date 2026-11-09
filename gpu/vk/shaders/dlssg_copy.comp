@@ -1,0 +1,11 @@
+#version 450
+// (hookshot) DLSS-G's colour before the HUD (vk_dlss.cpp): the upscale's output (#2, linear R11G11B10F) copied as it is right
+// after the network or DLSS SR wrote it. The HUD is drawn into that same image next (fc10fab7, 823bb6db), then the final pass.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D src;
+layout(binding = 1, rgba16f) uniform writeonly image2D dst;
+void main() {
+    const ivec2 g = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(g, imageSize(dst)))) return;
+    imageStore(dst, g, vec4(texelFetch(src, g, 0).rgb, 1.0));
+}

@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) <year> <copyright holders>
+Copyright (c) (the copyright holders and years named in each file's own header or in its folder's PROVENANCE.md / NOTICE)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
 associated documentation files (the "Software"), to deal in the Software without restriction, including

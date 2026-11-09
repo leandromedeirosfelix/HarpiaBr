@@ -1,129 +1,405 @@
 <Window x:Class="HarpiaBuilder.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Harpia Builder" Width="680" Height="580" MinWidth="560" MinHeight="520"
-        WindowStartupLocation="CenterScreen" Background="{StaticResource Page}" AllowDrop="True"
-        UseLayoutRounding="True" SnapsToDevicePixels="True">
+        xmlns:local="clr-namespace:HarpiaBuilder"
+        Title="Harpia" Width="960" Height="660" ResizeMode="CanMinimize"
+        WindowStartupLocation="CenterScreen" Background="Transparent" AllowDrop="True"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" FontFamily="{StaticResource Ui}">
 
+  <!-- One window, always 960x600: Windows 11's acrylic behind it (Glass.cs), Slate on Windows 10 -->
   <WindowChrome.WindowChrome>
-    <WindowChrome CaptionHeight="36" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    <WindowChrome CaptionHeight="64" ResizeBorderThickness="0" GlassFrameThickness="-1" CornerRadius="18" UseAeroCaptionButtons="False"/>
   </WindowChrome.WindowChrome>
 
-  <Grid>
-    <Grid.RowDefinitions>
-      <RowDefinition Height="36"/>
-      <RowDefinition Height="*"/>
-    </Grid.RowDefinitions>
+  <Grid x:Name="Root">
+    <Grid.Background>
+      <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#F21A161E" Offset="0"/>
+        <GradientStop Color="#F5100E14" Offset="1"/>
+      </LinearGradientBrush>
+    </Grid.Background>
 
-    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
-      <Button Style="{StaticResource Caption}" Click="Minimize" ToolTip="Minimize">
-        <Rectangle Width="10" Height="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-      </Button>
-      <Button Style="{StaticResource Caption}" Click="CloseWindow" ToolTip="Close">
-        <Path Data="M0,0 L10,10 M10,0 L0,10" StrokeThickness="1" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
-      </Button>
-    </StackPanel>
+    <!-- ===================== the start: the harpia in the middle ===================== -->
+    <Grid x:Name="Splash" RenderTransformOrigin="0.5,0.5" Panel.ZIndex="4">
+      <Grid.RenderTransform><ScaleTransform x:Name="SplashScale"/></Grid.RenderTransform>
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Grid Width="260" Height="260">
+          <Ellipse Margin="24" RenderTransformOrigin="0.5,0.5" x:Name="Halo">
+            <Ellipse.Fill>
+              <RadialGradientBrush>
+                <GradientStop Color="#66E8B860" Offset="0"/>
+                <GradientStop Color="#00E8B860" Offset="0.68"/>
+              </RadialGradientBrush>
+            </Ellipse.Fill>
+            <Ellipse.RenderTransform><ScaleTransform x:Name="HaloScale"/></Ellipse.RenderTransform>
+          </Ellipse>
+          <Image Source="pack://application:,,,/Images/harpia.png" Width="178" RenderTransformOrigin="0.5,0.5" RenderOptions.BitmapScalingMode="HighQuality">
+            <Image.RenderTransform>
+              <TransformGroup>
+                <RotateTransform x:Name="BobTurn"/>
+                <TranslateTransform x:Name="BobLift"/>
+              </TransformGroup>
+            </Image.RenderTransform>
+            <Image.Effect><DropShadowEffect BlurRadius="24" ShadowDepth="14" Direction="270" Opacity="0.6" Color="Black"/></Image.Effect>
+          </Image>
+        </Grid>
+        <TextBlock Text="Harpia" FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center" Margin="0,16,0,0"/>
+        <TextBlock x:Name="SplashText" Text="{local:L 'Starting…'}" FontSize="13" Foreground="#A6FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" MinHeight="20"/>
+        <Border Width="200" Height="3" CornerRadius="1.5" Background="#14FFFFFF" Margin="0,16,0,0" ClipToBounds="True">
+          <Border Width="80" HorizontalAlignment="Left" CornerRadius="1.5">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                <GradientStop Color="#00F6CC78" Offset="0"/>
+                <GradientStop Color="#FFF6CC78" Offset="0.5"/>
+                <GradientStop Color="#00F6CC78" Offset="1"/>
+              </LinearGradientBrush>
+            </Border.Background>
+            <Border.RenderTransform><TranslateTransform x:Name="Sweep"/></Border.RenderTransform>
+          </Border>
+        </Border>
+      </StackPanel>
+    </Grid>
 
-    <!-- Setup -->
-    <Grid x:Name="SetupPage" Grid.Row="1" Margin="40,8,40,32">
+    <!-- ===================== the installer ===================== -->
+    <Grid x:Name="Main" Opacity="0" IsHitTestVisible="False">
+      <Grid.RenderTransform><TranslateTransform x:Name="MainLift" Y="10"/></Grid.RenderTransform>
       <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="64"/>
         <RowDefinition Height="*"/>
-        <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
 
-      <StackPanel>
-        <Grid>
-          <TextBlock Text="Harpia Builder" Style="{StaticResource Heading}"/>
-          <ComboBox x:Name="LanguageBox" Style="{StaticResource Choice}" HorizontalAlignment="Right" VerticalAlignment="Center" Width="190"
-                    AutomationProperties.Name="Language" SelectionChanged="LanguageChanged"/>
-        </Grid>
-        <TextBlock x:Name="Subtitle" Style="{StaticResource Note}" Margin="0,6,0,0"/>
+      <!-- the head: the harpia, and the steps (or the update's versions) -->
+      <StackPanel Orientation="Horizontal" Margin="28,0,0,0" VerticalAlignment="Center">
+        <Image Source="pack://application:,,,/Images/harpia.png" Width="28" RenderOptions.BitmapScalingMode="HighQuality">
+          <Image.Effect><DropShadowEffect BlurRadius="6" ShadowDepth="2" Direction="270" Opacity="0.5" Color="Black"/></Image.Effect>
+        </Image>
+        <TextBlock Text="Harpia" FontSize="15" FontWeight="Bold" Margin="10,0,0,0" VerticalAlignment="Center"/>
+        <Border x:Name="VersionChip" Margin="12,0,0,0" VerticalAlignment="Center" Visibility="Collapsed">
+          <TextBlock x:Name="VersionChipText" FontSize="12" Foreground="{StaticResource InkSoft}" VerticalAlignment="Center"/>
+        </Border>
       </StackPanel>
 
-      <StackPanel Grid.Row="1" Margin="0,32,0,0">
-        <Grid Margin="0,0,0,10">
-          <TextBlock x:Name="GameFilesLabel" Style="{StaticResource Label}" VerticalAlignment="Center" Margin="0"/>
-          <Border HorizontalAlignment="Right" Background="{StaticResource Raised}" BorderBrush="{StaticResource Line}" BorderThickness="1"
-                  CornerRadius="7" Padding="2">
-            <StackPanel Orientation="Horizontal">
-              <RadioButton x:Name="UseNup" Style="{StaticResource Seg}" GroupName="Source" IsChecked="True" Checked="SourceKindChanged"/>
-              <RadioButton x:Name="UseFolders" Style="{StaticResource Seg}" GroupName="Source" Checked="SourceKindChanged"/>
+      <Border x:Name="StepPill" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,12,0,0" Padding="4" Height="40" CornerRadius="20"
+              Background="#0BFFFFFF" BorderBrush="#17FFFFFF" BorderThickness="1">
+        <StackPanel x:Name="StepItems" Orientation="Horizontal"/>
+      </Border>
+
+      <Grid Grid.Row="1" Margin="64,16,64,34">
+
+        <!-- ===== 1: game files ===== -->
+        <Grid x:Name="FilesPage">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel>
+            <TextBlock x:Name="FilesTitle" Style="{StaticResource Heading}" Text="{local:L 'Build your game'}"/>
+            <TextBlock x:Name="FilesSub" Style="{StaticResource Sub}" Text="{local:L 'Pick your game files and where the game goes. Harpia does the rest, once.'}"/>
+            <TextBlock Style="{StaticResource Faint}" TextWrapping="Wrap" Margin="0,6,0,0"
+                       Text="{local:L 'Uses your own copy of the game (.nup). Free software (GPL-3.0).'}"/>
+          </StackPanel>
+
+          <StackPanel Grid.Row="1">
+            <TextBlock x:Name="FoundLabel" Style="{StaticResource Label}" Text="{local:L 'FOUND ON THIS PC'}"/>
+            <Border Style="{StaticResource Card}">
+              <ScrollViewer MaxHeight="128" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="DumpList"/>
+              </ScrollViewer>
+            </Border>
+          </StackPanel>
+
+          <WrapPanel Grid.Row="2" Margin="0,10,0,0" VerticalAlignment="Center">
+            <TextBlock x:Name="NotListed" Style="{StaticResource Note}" Text="{local:L 'Not listed?'}" Margin="0,0,8,0"/>
+            <Button x:Name="BrowseButton" Style="{StaticResource LinkButton}" Content="{local:L 'Browse…'}" Click="BrowseNup"/>
+            <TextBlock x:Name="DropNote" Style="{StaticResource Faint}" FontSize="13" Text="{local:L ' · or drop the file on this window · '}" VerticalAlignment="Center"/>
+            <Button x:Name="OtherWays" Style="{StaticResource LinkButton}" Foreground="{StaticResource InkSoft}" Content="{local:L 'romfs and exefs folders'}" Click="BrowseFolders"/>
+          </WrapPanel>
+
+          <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition Width="200"/></Grid.ColumnDefinitions>
+            <StackPanel>
+              <TextBlock x:Name="InstallLabel" Style="{StaticResource Label}" Text="{local:L 'INSTALL THE GAME TO'}"/>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBox x:Name="OutPath" Style="{StaticResource Path}" TextChanged="PathsChanged"/>
+                <Button x:Name="ChangeButton" Grid.Column="1" Style="{StaticResource Quiet}" Margin="10,0,0,0" Content="{local:L 'Change'}" Click="BrowseOut"/>
+              </Grid>
+              <!-- the build files: how much, where (Storage.cs), and choosing the place -->
+              <Grid Margin="0,8,0,0">
+                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <TextBlock x:Name="WorkNote" Style="{StaticResource Note}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center"/>
+                <Button x:Name="WorkChange" Grid.Column="1" Style="{StaticResource LinkButton}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                        Content="{local:L 'Change'}" Click="BrowseWork"/>
+                <Button x:Name="WorkReset" Grid.Column="2" Style="{StaticResource LinkButton}" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"
+                        Content="{local:L 'Default'}" Click="ResetWork"/>
+              </Grid>
+            </StackPanel>
+            <StackPanel Grid.Column="2">
+              <TextBlock x:Name="LanguageLabel" Style="{StaticResource Label}" Text="{local:L 'GAME LANGUAGE'}"/>
+              <ComboBox x:Name="LanguageBox" Style="{StaticResource Choice}" AutomationProperties.Name="{local:L 'Language'}" SelectionChanged="LanguageChanged"/>
+            </StackPanel>
+          </Grid>
+
+          <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+            <Grid VerticalAlignment="Center">
+              <Grid.ColumnDefinitions><ColumnDefinition Width="16"/><ColumnDefinition/></Grid.ColumnDefinitions>
+              <Border Width="16" Height="16" CornerRadius="8" Background="{StaticResource BrandSoft}" VerticalAlignment="Center">
+                <TextBlock Text="i" FontSize="10" FontWeight="Bold" Foreground="#F6CC78" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+              </Border>
+              <!-- (local: Harpia) the tools, then the PC check's summary: here, in a row every page state keeps (its own row at the
+                   bottom was squeezed out when the found list grew); all of its lines under Show details -->
+              <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center">
+                <TextBlock x:Name="ToolsNote" Style="{StaticResource Note}" FontSize="12" TextWrapping="Wrap"/>
+                <WrapPanel Margin="0,4,0,0">
+                  <TextBlock Style="{StaticResource Note}" FontSize="12" FontWeight="SemiBold" Text="{local:L 'PC check:'}" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                  <TextBlock x:Name="PcCheckText" Style="{StaticResource Note}" FontSize="12" TextWrapping="Wrap" VerticalAlignment="Center" Text="{local:L 'Checking this PC…'}"/>
+                </WrapPanel>
+                <!-- (the two links on a row of their own, aligned with the lines above) -->
+                <StackPanel Orientation="Horizontal" Margin="0,3,0,0">
+                  <Button x:Name="PcCheckDetails" Style="{StaticResource LinkButton}" FontSize="12" VerticalAlignment="Center"
+                          Content="{local:L 'Show details'}" Visibility="Collapsed" Click="PcCheckShowDetails"/>
+                  <Button x:Name="PcCheckButton" Style="{StaticResource LinkButton}" FontSize="12" Margin="14,0,0,0" VerticalAlignment="Center"
+                          Content="{local:L 'Check again'}" IsEnabled="False" Click="PcCheckAgain"/>
+                </StackPanel>
+                <Popup x:Name="PcCheckPopup" PlacementTarget="{Binding ElementName=PcCheckText}" Placement="Top" VerticalOffset="-8"
+                       StaysOpen="False" AllowsTransparency="True">
+                  <Border Background="{StaticResource Raised}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" CornerRadius="12" Padding="16,12">
+                    <TextBlock x:Name="PcCheckFull" Foreground="{StaticResource Ink}" FontSize="13" LineHeight="21"/>
+                  </Border>
+                </Popup>
+              </StackPanel>
+            </Grid>
+            <StackPanel Grid.Column="2">
+              <TextBlock x:Name="WorkerLabel" Style="{StaticResource Label}" Text="{local:L 'SPEED'}"/>
+              <ComboBox x:Name="WorkerBox" Style="{StaticResource Choice}" IsEditable="False" SelectionChanged="WorkerChanged"
+                        AutomationProperties.Name="{local:L 'Speed'}" AutomationProperties.LabeledBy="{Binding ElementName=WorkerLabel}"
+                        ToolTip="{local:L 'Automatic: one compiler per CPU thread while free memory holds it. Maximum: every thread, using more RAM.'}">
+                <ComboBox.FocusVisualStyle>
+                  <Style TargetType="Control">
+                    <Setter Property="Template">
+                      <Setter.Value><ControlTemplate><Border BorderBrush="{StaticResource Brand}" BorderThickness="2" CornerRadius="10" Margin="-2"/></ControlTemplate></Setter.Value>
+                    </Setter>
+                  </Style>
+                </ComboBox.FocusVisualStyle>
+              </ComboBox>
+            </StackPanel>
+          </Grid>
+
+          <Grid Grid.Row="6">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ProgressBar x:Name="SpaceBar" Style="{StaticResource Bar}" Foreground="{StaticResource Go}" Width="160" VerticalAlignment="Center"/>
+            <TextBlock x:Name="SpaceText" Grid.Column="1" Style="{StaticResource Note}" FontSize="12" Margin="10,0,0,0" VerticalAlignment="Center"/>
+            <!-- (local: Harpia) empty until the PC check's estimate (PcCheck.cs): no fixed number that could be far off -->
+            <TextBlock x:Name="AboutText" Grid.Column="2" Style="{StaticResource Faint}" Margin="0,0,14,0" VerticalAlignment="Center"/>
+            <!-- (an existing game folder, beside Play: NVIDIA DLSS on or off) -->
+            <Button x:Name="DlssFilesButton" Grid.Column="2" Style="{StaticResource LinkButton}" Margin="0,0,18,0" VerticalAlignment="Center"
+                    Click="DlssOpen" Visibility="Collapsed"/>
+            <Button x:Name="BuildButton" Grid.Column="3" Style="{StaticResource Primary}" Content="{local:L 'Build the game'}" IsEnabled="False" Click="StartBuild"/>
+          </Grid>
+        </Grid>
+
+        <!-- ===== (local: Harpia) NVIDIA DLSS, optional: NVIDIA's package, its licences accepted by the player (MainWindow.Dlss.cs) ===== -->
+        <Grid x:Name="DlssPage" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel>
+            <TextBlock Style="{StaticResource Heading}" Text="{local:L 'NVIDIA DLSS (optional)'}"/>
+            <TextBlock x:Name="DlssSub" Style="{StaticResource Sub}"/>
+          </StackPanel>
+          <StackPanel Grid.Row="1" Margin="0,14,0,0">
+            <TextBlock x:Name="DlssStatus" Style="{StaticResource Note}" TextWrapping="Wrap"/>
+            <ProgressBar x:Name="DlssBar" Style="{StaticResource Bar}" Margin="0,8,0,0" Maximum="1" Visibility="Collapsed"/>
+          </StackPanel>
+          <Border x:Name="DlssLicenceBox" Grid.Row="2" Style="{StaticResource Card}" Margin="0,14,0,12" Visibility="Collapsed">
+            <TextBox x:Name="DlssLicence" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Background="Transparent"
+                     BorderThickness="0" Foreground="{StaticResource Ink}" FontSize="12" Padding="12" AutomationProperties.Name="{local:L 'NVIDIA terms'}"/>
+          </Border>
+          <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <CheckBox x:Name="DlssAccept" Style="{StaticResource Tick}" IsChecked="False" Visibility="Collapsed" VerticalAlignment="Center"
+                      Content="{local:L 'I have read and accept the NVIDIA terms'}" Click="DlssAcceptChanged"/>
+            <Button x:Name="DlssBack" Grid.Column="1" Style="{StaticResource Quiet}" Margin="0,0,10,0" Content="{local:L 'Back'}" Click="DlssBackClick"/>
+            <Button x:Name="DlssGo" Grid.Column="2" Style="{StaticResource Primary}" Click="DlssGoClick"/>
+          </Grid>
+        </Grid>
+
+        <!-- ===== 2: building (and the update) ===== -->
+        <Grid x:Name="BuildPage" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/></Grid.ColumnDefinitions>
+            <Grid x:Name="RingBox" Width="120" Height="120" Margin="0,0,28,0">
+              <Ellipse Stroke="#14FFFFFF" StrokeThickness="10" Margin="0"/>
+              <Path x:Name="RingArc" Stroke="{StaticResource Brand}" StrokeThickness="10" StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+              <TextBlock x:Name="RingText" Text="0%" FontSize="24" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+              <TextBlock x:Name="BuildTitle" Style="{StaticResource Heading}" Text="{local:L 'Building your game'}"/>
+              <TextBlock x:Name="BuildNote" Style="{StaticResource Sub}"/>
+              <ProgressBar x:Name="UpdateBar" Style="{StaticResource Bar}" Margin="0,18,0,0" Visibility="Collapsed"/>
+            </StackPanel>
+          </Grid>
+
+          <Grid Grid.Row="1" Margin="0,22,0,14">
+            <Border x:Name="StepCard" Style="{StaticResource Card}" Padding="18,6" VerticalAlignment="Top">
+              <StackPanel x:Name="StageList"/>
+            </Border>
+            <TextBox x:Name="Log" Visibility="Collapsed" IsReadOnly="True" BorderThickness="1"
+                     BorderBrush="{StaticResource GlassLine}" Background="#33000000" Foreground="{StaticResource InkSoft}"
+                     FontFamily="{StaticResource Mono}" FontSize="11" Padding="10" VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
+          </Grid>
+
+          <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ToggleButton x:Name="ShowLog" Style="{StaticResource Link}" VerticalAlignment="Center" Content="{local:L 'Show details'}"
+                          Checked="LogToggled" Unchecked="LogToggled"/>
+            <Button x:Name="CancelButton" Grid.Column="1" Style="{StaticResource Quiet}" Content="{local:L 'Cancel'}" Click="CancelBuild"/>
+          </Grid>
+        </Grid>
+
+        <!-- ===== 3: ready ===== -->
+        <StackPanel x:Name="ReadyPage" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Grid Width="84" Height="84" HorizontalAlignment="Center">
+            <Ellipse Fill="{StaticResource GoSoft}">
+              <Ellipse.Effect><DropShadowEffect Color="#5FB08A" BlurRadius="60" ShadowDepth="0" Opacity="0.55"/></Ellipse.Effect>
+            </Ellipse>
+            <Ellipse Margin="-10" Stroke="#125FB08A" StrokeThickness="10"/>
+            <Path Data="M0,12 L10,22 L28,2" Stroke="{StaticResource Go}" StrokeThickness="4" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                  StrokeLineJoin="Round" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Grid>
+          <TextBlock x:Name="ReadyTitle" Style="{StaticResource Heading}" Text="{local:L 'Your game is ready'}" HorizontalAlignment="Center" Margin="0,24,0,0"/>
+          <TextBlock x:Name="ReadyNote" Style="{StaticResource Sub}" HorizontalAlignment="Center" TextAlignment="Center"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,28,0,0">
+            <Button x:Name="PlayButton" Style="{StaticResource GoButton}" Click="Play">
+              <StackPanel Orientation="Horizontal">
+                <Path Data="M0,0 L11,7 L0,14 Z" Fill="{StaticResource GoInk}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock x:Name="PlayText" Text="{local:L 'Play'}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource GoInk}"/>
+              </StackPanel>
+            </Button>
+            <Button x:Name="OpenButton" Style="{StaticResource Quiet}" Height="50" Margin="12,0,0,0" Content="{local:L 'Open folder'}" Click="OpenFolder"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,22,0,0">
+            <CheckBox x:Name="DesktopTick" Style="{StaticResource Tick}" Content="{local:L 'Desktop shortcut'}" IsChecked="True" Click="ShortcutsChanged"/>
+            <CheckBox x:Name="StartTick" Style="{StaticResource Tick}" Content="{local:L 'Start menu entry'}" IsChecked="True" Margin="18,0,0,0" Click="ShortcutsChanged"/>
+          </StackPanel>
+          <!-- (local: Harpia) NVIDIA DLSS, optional, from NVIDIA's package (MainWindow.Dlss.cs) -->
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,18,0,0">
+            <Button x:Name="DlssReadyButton" Style="{StaticResource LinkButton}" Click="DlssOpen" Visibility="Collapsed"/>
+            <TextBlock x:Name="DlssReadyNote" Style="{StaticResource Faint}" VerticalAlignment="Center"/>
+          </StackPanel>
+          <!-- what the builder keeps on this PC for quick updates (Storage.cs), and letting it go -->
+          <StackPanel x:Name="StorageRow" Visibility="Collapsed" HorizontalAlignment="Center" Margin="0,26,0,0" MaxWidth="560">
+            <TextBlock x:Name="StorageNote" Style="{StaticResource Note}" TextAlignment="Center" TextWrapping="Wrap"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,8,0,0">
+              <Button x:Name="FreeButton" Style="{StaticResource LinkButton}" Content="{local:L 'Free up space'}" Click="FreeSpace"/>
+              <Button Style="{StaticResource LinkButton}" Content="{local:L 'Show folder'}" Margin="18,0,0,0" Click="ShowStorage"/>
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+
+        <!-- ===== the launcher (Harpia Launcher.exe in the game folder, started with launch and its folder) ===== -->
+        <StackPanel x:Name="LaunchPage" Visibility="Collapsed" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Style="{StaticResource Label}" Text="THE LEGEND OF ZELDA" HorizontalAlignment="Center"/>
+          <TextBlock Style="{StaticResource Heading}" Text="Ocarina of Time" HorizontalAlignment="Center" FontSize="34" Margin="0,4,0,0"/>
+          <TextBlock x:Name="LaunchVersion" Style="{StaticResource Sub}" HorizontalAlignment="Center" TextAlignment="Center" Margin="0,8,0,0"/>
+          <TextBlock x:Name="LaunchStatus" FontSize="13" Foreground="{StaticResource InkSoft}" Text="{local:L 'Checking for updates…'}"
+                     HorizontalAlignment="Center" Margin="0,16,0,0"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,28,0,0">
+            <Button x:Name="LaunchUpdate" Style="{StaticResource Primary}" Height="50" Padding="26,0" Margin="0,0,12,0" Content="{local:L 'Update'}"
+                    Visibility="Collapsed" Click="LaunchUpdateClick"/>
+            <Button x:Name="LaunchPlay" Style="{StaticResource GoButton}" Click="LaunchPlayClick">
+              <StackPanel Orientation="Horizontal">
+                <Path Data="M0,0 L11,7 L0,14 Z" Fill="{StaticResource GoInk}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="{local:L 'Play'}" FontSize="16" FontWeight="Bold" Foreground="{StaticResource GoInk}"/>
+              </StackPanel>
+            </Button>
+          </StackPanel>
+          <Button x:Name="LaunchFolder" Style="{StaticResource LinkButton}" Foreground="{StaticResource InkFaint}" HorizontalAlignment="Center"
+                  Margin="0,22,0,0" Content="{local:L 'Open the game folder'}" Click="LaunchFolderClick"/>
+        </StackPanel>
+
+        <!-- ===== when something goes wrong ===== -->
+        <Grid x:Name="ProblemPage" Visibility="Collapsed">
+          <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+          </Grid.RowDefinitions>
+          <StackPanel>
+            <TextBlock x:Name="ProblemTitle" Style="{StaticResource Heading}" Text="{local:L 'The build stopped'}"/>
+            <TextBlock x:Name="ProblemSub" Style="{StaticResource Sub}" Text="{local:L 'Nothing was changed in your game folder.'}"/>
+          </StackPanel>
+          <Border Grid.Row="1" CornerRadius="10" BorderThickness="1" BorderBrush="#55E2776B" Padding="24,22" Margin="0,22,0,14" VerticalAlignment="Top">
+            <Border.Background>
+              <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                <GradientStop Color="#14E2776B" Offset="0"/>
+                <GradientStop Color="#00E2776B" Offset="0.7"/>
+              </LinearGradientBrush>
+            </Border.Background>
+            <StackPanel>
+              <StackPanel Orientation="Horizontal">
+                <Grid Width="28" Height="28">
+                  <Ellipse Fill="{StaticResource BadSoft}"/>
+                  <TextBlock Text="!" FontWeight="Bold" Foreground="{StaticResource Bad}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Grid>
+                <TextBlock x:Name="ProblemHead" FontSize="16" FontWeight="SemiBold" Margin="12,0,0,0" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="740"/>
+              </StackPanel>
+              <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+                <StackPanel>
+                  <TextBlock x:Name="ProblemText" Style="{StaticResource Note}" FontSize="14"/>
+                  <StackPanel x:Name="ProblemSteps" Margin="0,8,0,0"/>
+                </StackPanel>
+              </ScrollViewer>
             </StackPanel>
           </Border>
-        </Grid>
-
-        <Grid x:Name="NupRow">
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBox x:Name="NupPath" Style="{StaticResource Path}" TextChanged="PathsChanged"/>
-          <Button x:Name="BrowseA" Grid.Column="1" Style="{StaticResource Quiet}" Margin="8,0,0,0" Click="BrowseNup"/>
-        </Grid>
-
-        <StackPanel x:Name="FolderRows" Visibility="Collapsed">
-          <Grid Margin="0,0,0,8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock Text="romfs" Style="{StaticResource Note}" VerticalAlignment="Center"/>
-            <TextBox x:Name="RomfsPath" Grid.Column="1" Style="{StaticResource Path}" TextChanged="PathsChanged"/>
-            <Button x:Name="BrowseB" Grid.Column="2" Style="{StaticResource Quiet}" Margin="8,0,0,0" Click="BrowseRomfs"/>
+          <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Button x:Name="ProblemDetails" Style="{StaticResource LinkButton}" Foreground="{StaticResource InkSoft}" Content="{local:L 'Show details'}" Click="ProblemShowDetails"/>
+              <TextBlock Style="{StaticResource Faint}" FontSize="13" Text="  ·  " VerticalAlignment="Center"/>
+              <Button x:Name="CopyReport" Style="{StaticResource LinkButton}" Foreground="{StaticResource InkSoft}" Content="{local:L 'Copy for a bug report'}" Click="CopyForReport"/>
+            </StackPanel>
+            <Button x:Name="BackButton" Grid.Column="1" Style="{StaticResource Quiet}" Content="{local:L 'Back'}" Click="Back"/>
+            <Button x:Name="RepairButton" Grid.Column="2" Style="{StaticResource Primary}" Content="{local:L 'Repair'}" Margin="10,0,0,0" Click="Repair"/>
           </Grid>
-          <Grid>
-            <Grid.ColumnDefinitions><ColumnDefinition Width="58"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock Text="exefs" Style="{StaticResource Note}" VerticalAlignment="Center"/>
-            <TextBox x:Name="ExefsPath" Grid.Column="1" Style="{StaticResource Path}" TextChanged="PathsChanged"/>
-            <Button x:Name="BrowseC" Grid.Column="2" Style="{StaticResource Quiet}" Margin="8,0,0,0" Click="BrowseExefs"/>
-          </Grid>
-        </StackPanel>
-
-        <TextBlock x:Name="CheckText" Style="{StaticResource Note}" Margin="0,10,0,0" MinHeight="18"/>
-
-        <TextBlock x:Name="SaveToLabel" Style="{StaticResource Label}" Margin="0,28,0,8"/>
-        <Grid>
-          <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBox x:Name="OutPath" Style="{StaticResource Path}" TextChanged="PathsChanged"/>
-          <Button x:Name="BrowseD" Grid.Column="1" Style="{StaticResource Quiet}" Margin="8,0,0,0" Click="BrowseOut"/>
         </Grid>
-      </StackPanel>
-
-      <Grid Grid.Row="2">
-        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="SpaceText" Style="{StaticResource Note}" VerticalAlignment="Center" Margin="0,0,16,0"/>
-        <Button x:Name="BuildButton" Grid.Column="1" Style="{StaticResource Primary}" IsEnabled="False" Click="StartBuild"/>
       </Grid>
     </Grid>
 
-    <!-- Building -->
-    <Grid x:Name="BuildPage" Grid.Row="1" Margin="40,8,40,32" Visibility="Collapsed">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="*"/>
-        <RowDefinition Height="Auto"/>
-      </Grid.RowDefinitions>
-
-      <StackPanel>
-        <TextBlock x:Name="BuildTitle" Style="{StaticResource Heading}"/>
-        <TextBlock x:Name="BuildNote" Style="{StaticResource Note}" Margin="0,6,0,0"/>
-      </StackPanel>
-
-      <Grid Grid.Row="1" Margin="0,28,0,16">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <StackPanel x:Name="StageList"/>
-        <TextBox x:Name="Log" Grid.Row="1" Margin="0,14,0,0" Visibility="Collapsed" IsReadOnly="True" BorderThickness="1"
-                 BorderBrush="{StaticResource Line}" Background="{StaticResource Raised}" Foreground="{StaticResource InkSoft}"
-                 FontFamily="{StaticResource Mono}" FontSize="11" Padding="8" VerticalScrollBarVisibility="Auto"
-                 HorizontalScrollBarVisibility="Auto" TextWrapping="NoWrap"/>
-      </Grid>
-
-      <Grid Grid.Row="2">
-        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-        <ToggleButton x:Name="ShowLog" Style="{StaticResource Link}" VerticalAlignment="Center"
-                      Checked="LogToggled" Unchecked="LogToggled"/>
-        <StackPanel Grid.Column="1" Orientation="Horizontal">
-          <Button x:Name="OpenButton" Style="{StaticResource Quiet}" Visibility="Collapsed" Click="OpenFolder" Margin="0,0,8,0"/>
-          <Button x:Name="BackButton" Style="{StaticResource Quiet}" Visibility="Collapsed" Click="Back"/>
-          <Button x:Name="CancelButton" Style="{StaticResource Quiet}" Click="CancelBuild"/>
-          <Button x:Name="PlayButton" Style="{StaticResource Primary}" Visibility="Collapsed" Click="Play"/>
+    <!-- the window's own buttons, over everything -->
+    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,6,0" Panel.ZIndex="9"
+                WindowChrome.IsHitTestVisibleInChrome="True">
+      <!-- (local: Harpia) the window's language: PT | EN, pt-BR first (the game's own is the list on the page) -->
+      <Border Style="{StaticResource Chip}" Margin="0,0,10,0" Padding="8,0">
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="UiPt" Style="{StaticResource LinkButton}" FontSize="12" Content="PT" Tag="pt" Click="UiLanguage"
+                  ToolTip="Português (Brasil)" AutomationProperties.Name="Português (Brasil)"/>
+          <TextBlock Text="|" FontSize="12" Foreground="{StaticResource InkFaint}" Margin="6,0" VerticalAlignment="Center"/>
+          <Button x:Name="UiEn" Style="{StaticResource LinkButton}" FontSize="12" Content="EN" Tag="en" Click="UiLanguage"
+                  ToolTip="English" AutomationProperties.Name="English"/>
         </StackPanel>
-      </Grid>
-    </Grid>
+      </Border>
+      <Button Style="{StaticResource Caption}" Click="Minimize" ToolTip="{local:L 'Minimize'}">
+        <Rectangle Width="10" Height="1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+      </Button>
+      <Button Style="{StaticResource Caption}" Click="CloseWindow" ToolTip="{local:L 'Close'}">
+        <Path Data="M0,0 L10,10 M10,0 L0,10" StrokeThickness="1.2" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+      </Button>
+    </StackPanel>
   </Grid>
 </Window>

@@ -8,7 +8,7 @@ Copies of the licence texts named by the `SPDX-License-Identifier` headers and t
 |---|---|
 | `GPL-3.0-or-later.txt`, `GPL-2.0-or-later.txt` | Hookshot/Harpia, Eden, suyu |
 | `Apache-2.0.txt` | FasTC / UNC (ASTC), wgpu-native (opção) |
-| `BSD-2-Clause.txt`, `BSD-3-Clause.txt` | dav1d, Opus, zstd, Sirit (cabeçalhos) |
+| `BSD-2-Clause.txt`, `BSD-3-Clause.txt` | dav1d, Opus, zstd, Sirit (o texto do projeto, em `gpu/vk/sirit/LICENSE.BSD-3-Clause`) |
 | `BSL-1.0.txt` | Boost |
 | `CC0-1.0.txt`, `WTFPL.txt` | trechos de utilitários herdados / inherited utility snippets |
 | `MIT.txt` | AMD FSR 1, NVIDIA NIS, VMA, MacNativeGames, TotK Recomp e outros |

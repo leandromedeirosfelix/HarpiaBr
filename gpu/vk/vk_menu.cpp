@@ -19,7 +19,13 @@
 #include <utility>
 #include <vector>
 
+#include "vk_paths.h"
 #include "vk_menu.h"
+#include "vk_work.h"   // (after the others: counts the commands that do GPU work, for full_barrier)
+#ifndef HARPIA_VERSION   // (nx2/build.py gives it to this file: nx2/version.py)
+#define HARPIA_VERSION "unknown"
+#endif
+#include "vk_dlss.h"
 #ifndef _WIN32
 #include "vk_gdi_linux.h"   // (hookshot) Linux: the GDI it draws with
 #endif
@@ -36,6 +42,7 @@ namespace {
     X(TAB_DISPLAY, "Display", "Tela")                                                                                    \
     X(TAB_GRAPHICS, "Graphics", "Gráficos")                                                                              \
     X(TAB_PERF, "Performance", "Desempenho")                                                                             \
+    X(TAB_INPUT, "Input", "Entrada")                                                                                     \
     X(TAB_CONTROLS, "Controls", "Controles")                                                                             \
     X(TAB_INFO, "Info", nullptr)                                                                                         \
     X(OFF, "Off", "Desligado")                                                                                           \
@@ -63,6 +70,14 @@ namespace {
     X(UPSCALER, "Upscaler", "Ampliação")                                                                                 \
     X(UPSCALER_D, "How the picture is scaled up to the window: FSR 1 and NIS keep the edges sharp.",                     \
       "Como a imagem é ampliada para a janela: FSR 1 e NIS mantêm as bordas nítidas.")                                   \
+    X(DLSS, "NVIDIA DLSS", nullptr)                                                                                      \
+    X(DLSS_D, "In place of the game's upscale; needs NVIDIA's sl.*.dll beside the executable. Sets the render scale.",   \
+      "No lugar da ampliação do jogo; precisa das sl.*.dll da NVIDIA ao lado do executável. Define a escala.")            \
+    X(DLSS_Q, "Quality", "Qualidade")                                                                                    \
+    X(DLSS_B, "Balanced", "Equilibrado")                                                                                 \
+    X(DLSS_P, "Performance", "Desempenho")                                                                               \
+    X(DLSS_UP, "Ultra Performance", "Ultra desempenho")                                                                  \
+    X(DLSS_AA, "Native AA (DLAA)", "AA nativo (DLAA)")                                                                   \
     X(SHARP, "Sharpness", "Nitidez")                                                                                     \
     X(SHARP_D, "After the scaling: RCAS with FSR 1, NIS's own with NIS, a light one otherwise.",                         \
       "Após a ampliação: RCAS com FSR 1, a do próprio NIS com NIS, uma leve nos outros.")                                \
@@ -98,6 +113,9 @@ namespace {
     X(FRAMEGEN, "Frame generation", "Geração de quadros")                                                                \
     X(FRAMEGEN_D, "Frames made between the game's own: 2x up to 8x its frame rate.",                                    \
       "Quadros criados entre os do jogo: de 2x até 8x a sua taxa de quadros.")                                           \
+    X(DLSSG, "Frame generation DLSS", "Geração de quadros DLSS")                                                         \
+    X(DLSSG_D, "NVIDIA DLSS with Reflex: 2x, 3x or 4x the frames shown (4x: RTX 50). Turns the other one off.",          \
+      "NVIDIA DLSS com Reflex: 2x, 3x ou 4x os quadros exibidos (4x: RTX 50). Desliga a outra.")                         \
     X(PACE, "Frame pacing", "Ritmo de quadros")                                                                          \
     X(PACE_D, "Frames shown on an even beat, for smoother motion.",                                                      \
       "Quadros mostrados em um ritmo regular, para um movimento mais suave.")                                            \
@@ -145,13 +163,81 @@ namespace {
     X(I_OUTPUT, "Output", "Saída")                                                                                       \
     X(I_KEYS, "Keys", "Teclas")                                                                                          \
     X(I_KEY_MENU, "F1 or Insert: this menu", "F1 ou Insert: este menu")                                                  \
-    X(I_KEY_FULL, "F11: fullscreen", "F11: tela cheia")                                                                  \
+    X(I_KEY_FULL, "F11 or Alt+Enter: fullscreen", "F11 ou Alt+Enter: tela cheia")                                        \
     X(I_KEY_PAD, "Gamepad: Back + Start (or Home): this menu, LB / RB: tabs",                                           \
       "Controle: Back + Start (ou Home): este menu, LB / RB: abas")                                                      \
     X(I_CREDITS, "Credits", "Créditos")                                                                                  \
     X(I_FSR, "AMD FidelityFX Super Resolution 1: AMD, MIT license", "AMD FidelityFX Super Resolution 1: AMD, licença MIT") \
     X(I_NIS, "NVIDIA Image Scaling: NVIDIA, MIT license", "NVIDIA Image Scaling: NVIDIA, licença MIT")                   \
-    X(I_HINT, "Q / E  tabs      Esc  close", "Q / E  abas      Esc  fechar")
+    X(I_HINT, "Q / E  tabs      Esc  close", "Q / E  abas      Esc  fechar")                                           \
+    X(PRESET, "Quality preset", "Predefinição de qualidade")                                                             \
+    X(PRESET_D, "Sets render scale, upscaler, sharpness, frame generation and texture quality for a GPU tier (FSR 1 and " \
+      "NIS are kept). Changing any of those rows makes it Custom.",                                                      \
+      "Ajusta escala, ampliação, nitidez, geração de quadros e qualidade de textura para uma faixa de GPU (FSR 1 e NIS " \
+      "são mantidos). Mudar qualquer uma dessas linhas a deixa Personalizada.")                                          \
+    X(PR_CUSTOM, "Custom", "Personalizada")                                                                              \
+    X(PR_MIN, "Minimum (4GB)", "Mínima (4GB)")                                                                           \
+    X(PR_LOW, "Low (6GB)", "Baixa (6GB)")                                                                                \
+    X(PR_BALANCED, "Balanced (8GB)", "Equilibrada (8GB)")                                                                \
+    X(PR_HIGH, "High (12GB)", "Alta (12GB)")                                                                             \
+    X(PR_ULTRA, "Ultra (16GB+)", nullptr)                                                                                \
+    X(PAD_BG, "Controller in background", "Controle em segundo plano")                                                   \
+    X(PAD_BG_D, "On: the controller keeps playing while another window has the focus, for streaming. The keyboard and " \
+      "mouse still need the game's window.",                                                                             \
+      "Ligado: o controle continua jogando com outra janela em foco, para streaming. Teclado e mouse ainda precisam da " \
+      "janela do jogo.")                                                                                                 \
+    X(TEXT_SPEED, "Text speed", "Velocidade do texto")                                                                   \
+    X(TEXT_SPEED_D, "How fast dialogue letters appear. Normal is the game's own pace; Instant shows each page at once, " \
+      "as pressing A does.",                                                                                             \
+      "A rapidez com que as letras dos diálogos aparecem. Normal é o ritmo do jogo; Instantâneo mostra cada página de "  \
+      "uma vez, como apertar A.")                                                                                        \
+    X(TS_NORMAL, "Normal", nullptr)                                                                                      \
+    X(TS_INSTANT, "Instant", "Instantâneo")                                                                              \
+    X(GPUDEV_D, "Which graphics card Vulkan uses. Auto picks the best dedicated one. Read at the start.",                \
+      "Qual placa de vídeo o Vulkan usa. Auto escolhe a melhor dedicada. Lido ao iniciar.")                              \
+    X(ROBUST, "Robust buffers", "Buffers protegidos")                                                                    \
+    X(ROBUST_D, "Bounds-checked buffer reads: a read past a buffer's end is dropped instead of stopping the GPU. Auto "  \
+      "is on, on every card; Off can be faster on some NVIDIA cards. Read at the start.",                                \
+      "Leituras de buffer com limite: uma leitura além do fim é descartada em vez de travar a GPU. Auto é ligado em "    \
+      "toda placa; Desligado pode ser mais rápido em algumas NVIDIA. Lido ao iniciar.")                                  \
+    X(MOUSE_CAM, "Mouse camera", "Câmera do mouse")                                                                      \
+    X(MOUSE_CAM_D, "Native: the captured mouse turns the camera itself, one to one, as in a PC game. As the stick: the " \
+      "mouse stands in for the right stick, with its curve and top speed.",                                              \
+      "Nativa: o mouse capturado gira a própria câmera, um para um, como num jogo de PC. Como o analógico: o mouse faz " \
+      "o papel do analógico direito, com a sua curva e velocidade máxima.")                                              \
+    X(MC_NATIVE, "Native", "Nativa")                                                                                     \
+    X(MC_STICK, "As the stick", "Como o analógico")                                                                      \
+    X(MOUSE_SENS, "Mouse sensitivity", "Sensibilidade do mouse")                                                         \
+    X(MOUSE_SENS_D, "How far the camera turns for a mouse movement, with either mouse camera. At 1.00 native look turns " \
+      "a tenth of a degree a count. The - and = keys change it in the game too.",                                        \
+      "Quanto a câmera gira para um movimento do mouse, nos dois modos. Em 1,00 a câmera nativa gira um décimo de grau " \
+      "por contagem. As teclas - e = também mudam no jogo.")                                                             \
+    X(MOUSE_INV, "Invert mouse vertical", "Inverter mouse vertical")                                                     \
+    X(MOUSE_INV_D, "Swaps up and down for the mouse: moving it forward tilts the camera down.",                          \
+      "Troca cima e baixo no mouse: movê-lo para a frente inclina a câmera para baixo.")                                 \
+    X(INV_X, "Invert camera X", "Inverter câmera X")                                                                     \
+    X(INV_X_D, "Inverts horizontal look (left / right) on the right stick.",                                            \
+      "Inverte o olhar horizontal (esquerda / direita) no analógico direito.")                                           \
+    X(INV_Y, "Invert camera Y", "Inverter câmera Y")                                                                     \
+    X(INV_Y_D, "Inverts vertical look (up / down) on the right stick.",                                                 \
+      "Inverte o olhar vertical (cima / baixo) no analógico direito.")                                                   \
+    X(LAYOUT, "Layout preset", "Layout do controle")                                                                     \
+    X(LAYOUT_D, "Nintendo (the Switch's order), Xbox / PC (A to act and talk), or the face buttons swapped. Binding a "  \
+      "button by hand makes it Custom.",                                                                                 \
+      "Nintendo (a ordem do Switch), Xbox / PC (A para agir e falar) ou os botões de face trocados. Associar um botão "  \
+      "à mão o deixa Personalizado.")                                                                                    \
+    X(PL_NINTENDO, "Nintendo", nullptr)                                                                                  \
+    X(PL_XBOX, "Xbox / PC", nullptr)                                                                                     \
+    X(PL_SWAP, "Swap face", "Trocar face")                                                                               \
+    X(PL_CUSTOM, "Custom", "Personalizado")                                                                              \
+    X(C_MOVE_UP, "Move forward", "Andar para frente")                                                                    \
+    X(C_MOVE_DOWN, "Move back", "Andar para trás")                                                                       \
+    X(C_MOVE_LEFT, "Move left", "Andar para a esquerda")                                                                 \
+    X(C_MOVE_RIGHT, "Move right", "Andar para a direita")                                                                \
+    X(C_CAM_UP, "Camera up", "Câmera para cima")                                                                         \
+    X(C_CAM_DOWN, "Camera down", "Câmera para baixo")                                                                    \
+    X(C_CAM_LEFT, "Camera left", "Câmera para a esquerda")                                                               \
+    X(C_CAM_RIGHT, "Camera right", "Câmera para a direita")
 
 enum Sid {
 #define X(id, en, pt) S_##id,
@@ -165,13 +251,13 @@ const char* const strings[S_N][2] = {
 #undef X
 };
 static_assert(S_PAD_RTRIGGER - S_PAD_SOUTH + 1 == HOS_PAD_N, "a name for each gamepad input, in HOS_PAD_* order");
-static_assert(S_TAB_INFO - S_TAB_DISPLAY == 4, "the tabs' names in order");
+static_assert(S_TAB_INFO - S_TAB_DISPLAY == 5, "the tabs' names in order");
 int lang = 0;   // 1: Portuguese (Brazil)
 const char* T(int id) { return strings[id][lang] ? strings[id][lang] : strings[id][0]; }
 
 std::string exe_dir() {
     char exe[MAX_PATH];
-    const DWORD n = GetModuleFileNameA(nullptr, exe, MAX_PATH);
+    const DWORD n = game_module_path(exe, MAX_PATH);   // (upstream 81f2084: the game folder, not bin beside the launcher)
     std::string dir(exe, n);
     return dir.substr(0, dir.find_last_of("\\/") + 1);
 }
@@ -200,9 +286,26 @@ const char* tx_onoff(int v) { return T(v ? S_ON : S_OFF); }
 const char* tx_aspect(int v) { return T(v == 2 ? S_FILL : v == 1 ? S_FIT : S_STRETCH); }
 const char* tx_vsync(int v) { return T(v == 2 ? S_TEARING : v == 1 ? S_ON : S_OFF); }
 const char* tx_scale(int v) { return v ? (snprintf(num, sizeof num, "%d%%", v), num) : T(S_AUTO); }
+} // namespace
+// (hookshot: the scale DLSS SR fixes while it runs, or DLSS-G alone while loaded and on (no dynamic resolution: Auto is 100%,
+// a fixed percent stays), as vk_replay.cpp's t.option gives the host; -1: the player's render scale)
+int menu_dlss_scale() {
+    if (dlss_active()) return dlss_scale_percent(opts.dlss, dlss_out_h, dlss_base());
+    if (dlssg_on() && opts.dlssg >= 2) return opts.render_scale ? opts.render_scale : 100;
+    return -1;
+}
+namespace {
+const char* tx_render_scale(int v) {   // (the render scale row and the Info tab: DLSS's while it overrides the player's)
+    const int d = menu_dlss_scale();
+    return d < 0 || d == v ? tx_scale(v) : (snprintf(num, sizeof num, "%d%% (DLSS)", d), num);
+}
 const char* tx_upscale(int v) {
     static const char* t[] = {"Linear", "Catmull-Rom", "Lanczos", "AMD FSR 1", "NVIDIA NIS"};
     return t[std::clamp(v, 0, 4)];
+}
+const char* tx_dlss(int v) {   // (Options::dlss)
+    static const int s[] = {S_OFF, S_AUTO, S_DLSS_AA, S_DLSS_Q, S_DLSS_B, S_DLSS_P, S_DLSS_UP};
+    return T(s[std::clamp(v, 0, 6)]);
 }
 const char* tx_percent(int v) { return snprintf(num, sizeof num, "%d%%", v), num; }
 const char* tx_times(int v) { return snprintf(num, sizeof num, "%dx", v), num; }
@@ -213,10 +316,45 @@ const char* tx_fog(int v) { return T(v ? S_FOG_CLASSIC : S_FOG_GAME); }
 const char* tx_texq(int v) { return T(v >= 2 ? S_TQ_ULTRA : v ? S_TQ_HIGH : S_TQ_NORMAL); }
 const char* tx_outres(int v) { return T(v ? S_OUTRES_25K : S_OUTRES_GAME); }
 const char* tx_speed(int v) { return T(v ? S_REAL_TIME : S_PER_FRAME); }
+const char* tx_text_speed(int v) { return v == 1 ? "2x" : v == 2 ? "4x" : T(v == 3 ? S_TS_INSTANT : S_TS_NORMAL); }
+const char* tx_preset(int v) { return T(S_PR_CUSTOM + std::clamp(v, 0, 5)); }
+static_assert(S_PR_ULTRA - S_PR_CUSTOM == 5, "the presets' names in order");
+int gpu_device_at_start = 0, robust_start = 0;   // (the values the game started with: menu_set_gpu_count, menu_init)
+const char* tx_gpu(int v) {   // (upstream b20ea5f: 0 Auto, else the device's place in vk_main.cpp's list and its name)
+    static char b[300];
+    if (v <= 0) return T(S_AUTO);
+    const int i = v - 1;
+    if (i < (int)gpu_device_names.size()) snprintf(b, sizeof b, "%d: %s", i, gpu_device_names[i].c_str());
+    else snprintf(b, sizeof b, "%d", i);
+    return b;
+}
+const char* tx_robust(int v) { return v == 1 ? T(S_OFF) : v == 2 ? T(S_ON) : T(S_AUTO); }
+const char* tx_mousecam(int v) { return T(v ? S_MC_NATIVE : S_MC_STICK); }
+const char* tx_sens(int v) { return snprintf(num, sizeof num, "%.2f", v / 100.0), num; }
+const char* tx_pad_layout(int v) { return T(S_PL_NINTENDO + std::clamp(v, 0, 3)); }
+static_assert(S_PL_CUSTOM - S_PL_NINTENDO == 3, "the layouts' names in order");
+
+// (upstream f447272) Quality presets: the rows they set, and only those. (local, review: render scale from upstream's
+// resolution 4/2/1 as 50/75/100, texture quality for its VRAM tiers, whose budget comes from that row alone (vk_texture.cpp's
+// own, never lowered by a preset); console mode, output resolution, pacing and game speed are the player's; an upscaler
+// chosen as FSR 1 or NIS stays)
+void apply_preset(int p) {
+    struct P { int scale, upscale, sharpness, framegen, tex_quality; };
+    static const P presets[] = {{50, 2, 50, 2, 0}, {75, 2, 35, 2, 0}, {100, 1, 25, 2, 0}, {100, 2, 30, 2, 1}, {100, 2, 40, 3, 2}};
+    if (p < 1 || p > 5) return;
+    const P& s = presets[p - 1];
+    opts.render_scale = s.scale, opts.sharpness = s.sharpness, opts.tex_quality = s.tex_quality;
+    opts.framegen = dlssg_on() && opts.dlssg >= 2 ? 0 : s.framegen;   // (hookshot: never with DLSS Frame Generation loaded)
+    if (opts.upscale < 3) opts.upscale = s.upscale;   // (3 FSR 1, 4 NIS: the player's)
+}
+bool preset_row(const int* v) {   // (a row a preset sets: changed by hand, the preset is Custom)
+    return v == &opts.render_scale || v == &opts.upscale || v == &opts.sharpness || v == &opts.framegen || v == &opts.tex_quality;
+}
 
 const int l_scale[] = {0, 100, 85, 75, 67, 58, 50, 44, 33};
 const int l_aniso[] = {0, 2, 4, 8, 16};
 const int l_framegen[] = {0, 2, 3, 4, 5, 6, 7, 8};
+const int l_dlssg[] = {0, 2, 3, 4};
 int aspect_start = 0;
 int fog_start = 1;   // (the fog the programs were translated with this run: RX_VK_OOT_VISUAL, read once)   // (Fill is read once, at the start: the badge while a change to or from it waits for a restart)
 
@@ -229,15 +367,21 @@ struct Row {
     int n, lo, hi, step;
     bool (*restart)(int v);   // (the "restart" badge, while it says so)
 };
-enum { TAB_DISPLAY, TAB_GRAPHICS, TAB_PERF, TAB_CONTROLS, TAB_INFO, kTabs };
+enum { TAB_DISPLAY, TAB_GRAPHICS, TAB_PERF, TAB_INPUT, TAB_CONTROLS, TAB_INFO, kTabs };
 Row rows[] = {
     {"fullscreen", &opts.fullscreen, TAB_DISPLAY, S_FULLSCREEN, S_FULLSCREEN_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
     {"aspect", &opts.aspect, TAB_DISPLAY, S_ASPECT, S_ASPECT_D, tx_aspect, nullptr, 0, 0, 2, 1,
      [](int v) { return v == 2 || (aspect_start == 2 && v != 2); }},
     {"vsync", &opts.vsync, TAB_DISPLAY, S_VSYNC, S_VSYNC_D, tx_vsync, nullptr, 0, 0, 2, 1, nullptr},
     {"fps_counter", &opts.show_fps, TAB_DISPLAY, S_FPS, S_FPS_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
-    {"render_scale", &opts.render_scale, TAB_GRAPHICS, S_SCALE, S_SCALE_D, tx_scale, l_scale, 9, 0, 0, 0, nullptr},
+    // (upstream b20ea5f; vk_main.cpp picks the device with it; hi: the devices there are, menu_set_gpu_count)
+    {"gpu_device", &opts.gpu_device, TAB_DISPLAY, S_I_GPU, S_GPUDEV_D, tx_gpu, nullptr, 0, 0, 8, 1,
+     [](int v) { return v != gpu_device_at_start; }},
+    {"quality_preset", &opts.preset, TAB_GRAPHICS, S_PRESET, S_PRESET_D, tx_preset, nullptr, 0, 0, 5, 1, nullptr},
+    {"render_scale", &opts.render_scale, TAB_GRAPHICS, S_SCALE, S_SCALE_D, tx_render_scale, l_scale, 9, 0, 0, 0, nullptr},
     {"upscaling", &opts.upscale, TAB_GRAPHICS, S_UPSCALER, S_UPSCALER_D, tx_upscale, nullptr, 0, 0, 4, 1, nullptr},
+    {"dlss", &opts.dlss, TAB_GRAPHICS, S_DLSS, S_DLSS_D, tx_dlss, nullptr, 0, 0, 6, 1,
+     [](int v) { return v != 0 && !dlss_active(); }},   // (restart: on, and Streamline not loaded at the start; off is at once)
     {"sharpness", &opts.sharpness, TAB_GRAPHICS, S_SHARP, S_SHARP_D, tx_percent, nullptr, 0, 0, 100, 10, nullptr},
     {"anisotropy", &opts.anisotropy, TAB_GRAPHICS, S_ANISO, S_ANISO_D, tx_aniso, l_aniso, 5, 0, 0, 0, nullptr},
     {"output_res", &opts.output_res, TAB_GRAPHICS, S_OUTRES, S_OUTRES_D, tx_outres, nullptr, 0, 0, 1, 1,
@@ -249,14 +393,34 @@ Row rows[] = {
     {"handheld_profile", &opts.handheld, TAB_GRAPHICS, S_CONSOLE, S_CONSOLE_D, tx_console, nullptr, 0, 0, 1, 1,
      [](int) { return true; }},
     {"frame_generation", &opts.framegen, TAB_PERF, S_FRAMEGEN, S_FRAMEGEN_D, tx_framegen, l_framegen, 8, 0, 0, 0, nullptr},
+    // (hookshot: NVIDIA DLSS Frame Generation, vk_dlss.cpp; only with its DLLs and an RTX 40 or 50)
+    {"dlss_frame_generation", &opts.dlssg, TAB_PERF, S_DLSSG, S_DLSSG_D, tx_framegen, l_dlssg, 4, 0, 0, 0,
+     [](int v) { return v >= 2 && !dlssg_on(); }},   // (restart: on, and DLSS-G not loaded at the start; off and 2x-4x at once)
     {"frame_pacing", &opts.pace, TAB_PERF, S_PACE, S_PACE_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
     {"game_speed", &opts.realtime, TAB_PERF, S_SPEED, S_SPEED_D, tx_speed, nullptr, 0, 0, 1, 1, nullptr},
+    // (upstream 52a4478; option 5, HOS_TEXT_SPEED over it)
+    {"text_speed", &opts.text_speed, TAB_PERF, S_TEXT_SPEED, S_TEXT_SPEED_D, tx_text_speed, nullptr, 0, 0, 3, 1, nullptr},
+    // (upstream 10ecfa9, abc38ff; vk_main.cpp takes opts.robust after menu_init, before the device is made)
+    {"robust_buffers", &opts.robust, TAB_PERF, S_ROBUST, S_ROBUST_D, tx_robust, nullptr, 0, 0, 2, 1,
+     [](int v) { return v != robust_start; }},
+    // (upstream 373a0c0; the host reads it as option 4, HOS_INPUT_BACKGROUND over it)
+    {"controller_in_background", &opts.pad_background, TAB_INPUT, S_PAD_BG, S_PAD_BG_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
+    // (upstream 1bfabdf: the face buttons' order, set on the Controls tab's bindings; 3 Custom is shown, not chosen)
+    {"layout_preset", &opts.pad_layout, TAB_INPUT, S_LAYOUT, S_LAYOUT_D, tx_pad_layout, nullptr, 0, 0, 2, 1, nullptr},
+    // (upstream 25bba9a, 64c4a4e: the host reads them as options 6, 7 and 8; 16 and 17 the right stick's inversions)
+    {"mouse_camera", &opts.mouse_native, TAB_INPUT, S_MOUSE_CAM, S_MOUSE_CAM_D, tx_mousecam, nullptr, 0, 0, 1, 1, nullptr},
+    {"mouse_sensitivity", &opts.mouse_sens, TAB_INPUT, S_MOUSE_SENS, S_MOUSE_SENS_D, tx_sens, nullptr, 0, 10, 500, 10, nullptr},
+    {"invert_mouse_vertical", &opts.mouse_invert, TAB_INPUT, S_MOUSE_INV, S_MOUSE_INV_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
+    {"invert_camera_x", &opts.invert_cam_x, TAB_INPUT, S_INV_X, S_INV_X_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
+    {"invert_camera_y", &opts.invert_cam_y, TAB_INPUT, S_INV_Y, S_INV_Y_D, tx_onoff, nullptr, 0, 0, 1, 1, nullptr},
 };
 constexpr int kRows = sizeof rows / sizeof rows[0];
 int tab_rows(int tab, int* out) {
     int n = 0;
     for (int i = 0; i < kRows; i++)
-        if (rows[i].tab == tab) out[n++] = i;
+        if (rows[i].tab == tab && (rows[i].value != &opts.dlss || dlss_dll_present()) &&
+            (rows[i].value != &opts.dlssg || dlssg_dll_present()))   // (DLSS, DLSS-G: only with their DLLs)
+            out[n++] = i;
     return n;
 }
 int row_of(const int* value) {
@@ -296,9 +460,29 @@ int cur_tab = TAB_DISPLAY;
 int sel_row[kTabs] = {};   // (each options tab's chosen row)
 bool menu_refresh = false;
 // (hookshot) the controls, kept by the host (host/nn_hid.c reads them back from here): pad_<button>, key_<button>
-const char* const bind_names[HOS_SW_N] = {"a", "b", "x", "y", "ls", "rs", "l", "r", "zl", "zr", "plus", "minus",
-                                          "left", "up", "right", "down"};
+const char* const bind_names[HOS_KEY_N] = {"a", "b", "x", "y", "ls", "rs", "l", "r", "zl", "zr", "plus", "minus",
+                                           "left", "up", "right", "down", "move_up", "move_down", "move_left",
+                                           "move_right", "cam_up", "cam_down", "cam_left", "cam_right"};
 bool can_bind() { return host && host->binding && host->bind && host->pad_raw; }
+// (upstream 1bfabdf, f1b5725) The face buttons' layouts, as the gamepad inputs of A, B, X and Y: set as bindings, and the
+// row shows what the bindings are
+const int layouts[3][4] = {{HOS_PAD_EAST, HOS_PAD_SOUTH, HOS_PAD_NORTH, HOS_PAD_WEST},    // (Nintendo)
+                           {HOS_PAD_SOUTH, HOS_PAD_EAST, HOS_PAD_WEST, HOS_PAD_NORTH},    // (Xbox / PC)
+                           {HOS_PAD_SOUTH, HOS_PAD_EAST, HOS_PAD_NORTH, HOS_PAD_WEST}};   // (the face buttons swapped)
+const int face[4] = {HOS_SW_A, HOS_SW_B, HOS_SW_X, HOS_SW_Y};
+void apply_pad_layout(int layout) {
+    if (!can_bind() || layout < 0 || layout > 2) return;
+    for (int i = 0; i < 4; i++) host->bind(HOS_BIND_PAD, face[i], 0, layouts[layout][i]);
+}
+int detect_pad_layout() {
+    if (!can_bind()) return opts.pad_layout;
+    for (int l = 0; l < 3; l++) {
+        int i = 0;
+        while (i < 4 && host->binding(HOS_BIND_PAD, face[i], 0) == layouts[l][i]) i++;
+        if (i == 4) return l;
+    }
+    return 3;
+}
 /// (local) The file's own lines kept: the ones it owns (its rows', the bindings') replaced where they are, the rest left as they are
 void save() {
     // (local, review: the host reads the bindings from this file the first time it is asked; asked now, before "w" empties it)
@@ -307,9 +491,11 @@ void save() {
     for (const Row& r : rows) mine.emplace_back(r.key, std::to_string(*r.value));
     // (local, review: the host reads only ultrawide= at the start, so it is ours too, kept to Fill; else a stale 1 wins)
     mine.emplace_back("ultrawide", std::to_string(opts.aspect == 2));
-    mine.emplace_back("options_version", "2");   // (game_speed below 2 was only ever the old default, see menu_init)
-    for (int i = 0; i < HOS_SW_N && can_bind(); i++) {
-        mine.emplace_back(std::string("pad_") + bind_names[i], std::to_string(host->binding(HOS_BIND_PAD, i, 0)));
+    // (2: game_speed below 2 was only ever the old default, see menu_init; 3, upstream be960bb: the mouse's buttons are
+    // bindings, host/nn_hid.c binds_load)
+    mine.emplace_back("options_version", "3");
+    for (int i = 0; i < HOS_KEY_N && can_bind(); i++) {   // (the keys-only controls, HOS_KEY_*, have no pad_ line)
+        if (i < HOS_SW_N) mine.emplace_back(std::string("pad_") + bind_names[i], std::to_string(host->binding(HOS_BIND_PAD, i, 0)));
         mine.emplace_back(std::string("key_") + bind_names[i], std::to_string(host->binding(HOS_BIND_KEY, i, 0)) + "," +
                                                                   std::to_string(host->binding(HOS_BIND_KEY, i, 1)));
     }
@@ -346,7 +532,7 @@ void save() {
 
 // ---- (hookshot) the Controls tab: what presses each of the Switch's buttons, a gamepad input and up to two keys ----
 struct Control {
-    int button;   // HOS_SW_*
+    int button;   // HOS_SW_*, or HOS_KEY_* (keys only)
     const char* fixed;   // (its name in every language, or nullptr: name)
     int name;
 };
@@ -355,8 +541,14 @@ const Control controls[] = {{HOS_SW_A, "A", 0}, {HOS_SW_B, "B", 0}, {HOS_SW_X, "
                             {HOS_SW_PLUS, nullptr, S_PLUS}, {HOS_SW_MINUS, nullptr, S_MINUS},
                             {HOS_SW_LS, nullptr, S_PAD_LSTICK}, {HOS_SW_RS, nullptr, S_PAD_RSTICK},
                             {HOS_SW_UP, nullptr, S_PAD_UP}, {HOS_SW_DOWN, nullptr, S_PAD_DOWN},
-                            {HOS_SW_LEFT, nullptr, S_PAD_LEFT}, {HOS_SW_RIGHT, nullptr, S_PAD_RIGHT}};
+                            {HOS_SW_LEFT, nullptr, S_PAD_LEFT}, {HOS_SW_RIGHT, nullptr, S_PAD_RIGHT},
+                            // (upstream cd3735f: the left stick's and the camera's directions, keys only)
+                            {HOS_KEY_MOVE_UP, nullptr, S_C_MOVE_UP}, {HOS_KEY_MOVE_DOWN, nullptr, S_C_MOVE_DOWN},
+                            {HOS_KEY_MOVE_LEFT, nullptr, S_C_MOVE_LEFT}, {HOS_KEY_MOVE_RIGHT, nullptr, S_C_MOVE_RIGHT},
+                            {HOS_KEY_CAM_UP, nullptr, S_C_CAM_UP}, {HOS_KEY_CAM_DOWN, nullptr, S_C_CAM_DOWN},
+                            {HOS_KEY_CAM_LEFT, nullptr, S_C_CAM_LEFT}, {HOS_KEY_CAM_RIGHT, nullptr, S_C_CAM_RIGHT}};
 constexpr int kControls = sizeof controls / sizeof controls[0];   // (then "Reset to defaults")
+bool keys_only(int i) { return i < kControls && controls[i].button >= HOS_SW_N; }   // (no gamepad input for those)
 const char* pad_name(int p) { return p >= 0 && p < HOS_PAD_N ? T(S_PAD_SOUTH + p) : T(S_C_NONE); }
 const char* key_name(int vk) {
     static char b[16];
@@ -396,6 +588,11 @@ const char* key_name(int vk) {
     case VK_OEM_5: return "\\";
     case VK_OEM_6: return "]";
     case VK_OEM_7: return "'";
+    case VK_LBUTTON: return "Left click";   // (upstream ce23f69: the mouse's buttons, while it is captured)
+    case VK_RBUTTON: return "Right click";
+    case VK_MBUTTON: return "Middle click";
+    case 0x05: return "Mouse 4";   // (VK_XBUTTON1)
+    case 0x06: return "Mouse 5";
     }
     return snprintf(b, sizeof b, "Key %d", vk), b;
 }
@@ -410,7 +607,8 @@ const std::vector<int>& bindable_keys() {
         for (int c : {VK_SPACE, VK_SHIFT, VK_CONTROL, VK_MENU, VK_TAB, VK_RETURN, VK_BACK, VK_CAPITAL, VK_UP, VK_DOWN,
                       VK_LEFT, VK_RIGHT, VK_HOME, VK_END, VK_PRIOR, VK_NEXT, VK_ADD, VK_SUBTRACT, VK_MULTIPLY,
                       VK_DIVIDE, VK_DECIMAL, VK_OEM_1, VK_OEM_PLUS, VK_OEM_COMMA, VK_OEM_MINUS, VK_OEM_PERIOD,
-                      VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7})
+                      VK_OEM_2, VK_OEM_3, VK_OEM_4, VK_OEM_5, VK_OEM_6, VK_OEM_7, VK_LBUTTON, VK_RBUTTON, VK_MBUTTON,
+                      0x05, 0x06})   // (the mouse's buttons too: they count while the mouse is captured)
             k.push_back(c);
     }
     return k;
@@ -521,12 +719,16 @@ int width(HDC dc, const char* s) {
 }
 
 // ---- (local) the panel: laid out in units of a 1080-line window, scaled to the window's height (ui) ----
-constexpr int kW = 820, kBar = 64, kTabH = 50, kTop = kBar + 3 + kTabH + 14, kRow = 46, kCRow = 32, kIRow = 34, kFoot = 104;
+constexpr int kW = 820, kBar = 64, kTabH = 50, kTop = kBar + 3 + kTabH + 14, kRow = 46, kCRow = 32, kIRow = 34;
+constexpr int kDescTop = 12, kDescW = kW - 72, kHintH = 38;   // the footer: the chosen row's description, then the keys' line
+int foot_lines = 3, foot_line_h = 27;   // (measure_foot: the longest description's wrapped lines, at least 3)
 constexpr int kInfoLines = 12;
-const COLORREF C_BG = RGB(14, 17, 21), C_BAR = RGB(22, 27, 33), C_TABON = RGB(31, 38, 46), C_LINE = RGB(46, 54, 62),
-               C_SEL = RGB(30, 56, 42), C_ACCENT = RGB(92, 196, 124), C_CHIP = RGB(56, 104, 72), C_LISTEN = RGB(150, 120, 40),
-               C_TEXT = RGB(206, 212, 208), C_HI = RGB(255, 255, 255), C_DIM = RGB(128, 138, 134),
-               C_BADGE_BG = RGB(84, 64, 24), C_BADGE = RGB(246, 204, 120);
+// (local: Harpia) the eagle badge's ink ground and bronze rim, the game's parchment text and gold. Every text pair is WCAG AA
+// (the lowest 5.3:1: gold on the selected row), and the selected row has a gold edge, for a controller's focus
+const COLORREF C_BG = RGB(16, 14, 20), C_BAR = RGB(26, 22, 30), C_TABON = RGB(52, 40, 28), C_LINE = RGB(104, 82, 48),
+               C_SEL = RGB(88, 64, 26), C_ACCENT = RGB(232, 184, 96), C_CHIP = RGB(118, 86, 38), C_LISTEN = RGB(150, 78, 28),
+               C_TEXT = RGB(236, 224, 198), C_HI = RGB(255, 246, 222), C_DIM = RGB(176, 160, 132),
+               C_BADGE_BG = RGB(92, 60, 24), C_BADGE = RGB(246, 204, 120);
 float ui = 1;
 int px(float v) { return (int)(v * ui + 0.5f); }
 int th(float v) { return std::max(1, px(v)); }   // (a line's or a font's: never nothing)
@@ -534,7 +736,34 @@ int content_h(int tab) {
     int idx[kRows];
     return tab == TAB_CONTROLS ? kCRow * (kControls + 2) : tab == TAB_INFO ? kIRow * kInfoLines : kRow * tab_rows(tab, idx);
 }
-int panel_h(int tab) { return kTop + content_h(tab) + 8 + kFoot; }
+int foot_h() { return kDescTop + foot_line_h * foot_lines + 4 + kHintH; }
+int panel_h(int tab) { return kTop + content_h(tab) + 8 + foot_h(); }
+/// (local) The footer holds every row's description, in either language, as paint_menu wraps it (2 lines cut pt-BR's
+/// Graphics text): measured at scale 1 and a little narrower than drawn, so the wrap at another scale never needs more
+void measure_foot() {
+    HDC dc = CreateCompatibleDC(nullptr);
+    HFONT f = font(19, FW_NORMAL);   // (paint_menu's f.mid)
+    HGDIOBJ old = SelectObject(dc, f);
+    TEXTMETRICW tm{};
+    GetTextMetricsW(dc, &tm);
+    const int line = std::max(1, (int)tm.tmHeight);
+    int most = 3;
+    auto measure = [&](int id) {
+        for (int l = 0; l < 2; l++) {
+            const char* s = strings[id][l] ? strings[id][l] : strings[id][0];
+            if (!s || !*s) continue;
+            const std::wstring w = wide(s);
+            RECT r{0, 0, kDescW - 16, 0};
+            DrawTextW(dc, w.c_str(), (int)w.size(), &r, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT);
+            most = std::max(most, ((int)r.bottom + line - 1) / line);
+        }
+    };
+    for (const Row& r : rows) measure(r.desc);
+    measure(S_C_HINT), measure(S_C_HINT_LISTEN);
+    SelectObject(dc, old), DeleteObject(f), DeleteDC(dc);
+    if (most != foot_lines || std::max(27, line) != foot_line_h) logf("vk: menu footer: %d lines of %d", most, std::max(27, line));
+    foot_lines = most, foot_line_h = std::max(27, line);
+}
 struct Fonts {
     HFONT title, tab, body, mid, small, badge;
 };
@@ -587,7 +816,8 @@ void paint_controls(HDC dc, const Fonts& f, int W) {
         const Control& c = controls[i];
         put(dc, x0, y, xp - px(8), y1, c.fixed ? c.fixed : T(c.name), sel ? C_HI : C_TEXT, DT_LEFT | DT_END_ELLIPSIS);
         for (int col = 0; col < 2; col++) {
-            std::string v = col == 0 ? pad_name(host->binding(HOS_BIND_PAD, c.button, 0)) : keys_text(c.button);
+            std::string v = col == 0 ? (keys_only(i) ? "-" : pad_name(host->binding(HOS_BIND_PAD, c.button, 0)))
+                                     : keys_text(c.button);
             if (sel && col == ccol && listening) v = T(col ? S_C_PRESS_KEY : S_C_PRESS_BUTTON);
             const int cx = col ? xk : xp, cx1 = col ? x1 : xk - px(8);
             if (sel && col == ccol)
@@ -602,7 +832,7 @@ void paint_info(HDC dc, const Fonts& f, int W) {
     char out[32];
     snprintf(out, sizeof out, "%u x %u", dev.swap_extent.width, dev.swap_extent.height);
     const struct { int label; const char* value; } lines[kInfoLines] = {
-        {S_I_GPU, dev.props.deviceName}, {S_SCALE, tx_scale(opts.render_scale)}, {S_I_OUTPUT, out}, {-1, nullptr},
+        {S_I_GPU, dev.props.deviceName}, {S_SCALE, tx_render_scale(opts.render_scale)}, {S_I_OUTPUT, out}, {-1, nullptr},
         {S_I_KEYS, nullptr}, {S_I_KEY_MENU, ""}, {S_I_KEY_FULL, ""}, {S_I_KEY_PAD, ""}, {-1, nullptr},
         {S_I_CREDITS, nullptr}, {S_I_FSR, ""}, {S_I_NIS, ""}};
     for (int k = 0; k < kInfoLines; k++) {
@@ -622,7 +852,7 @@ void paint_info(HDC dc, const Fonts& f, int W) {
     }
 }
 void paint_menu(HDC dc, uint32_t bw, uint32_t bh) {
-    const int W = (int)bw, H = (int)bh, bar = px(kBar), ty = bar + th(3), tb = ty + px(kTabH), foot = H - px(kFoot);
+    const int W = (int)bw, H = (int)bh, bar = px(kBar), ty = bar + th(3), tb = ty + px(kTabH), foot = H - px(foot_h());
     fill(dc, 0, 0, W, H, C_BG);
     fill(dc, 0, 0, W, bar, C_BAR);
     fill(dc, 0, bar, W, th(3), C_ACCENT);
@@ -631,12 +861,15 @@ void paint_menu(HDC dc, uint32_t bw, uint32_t bh) {
     SetBkMode(dc, TRANSPARENT);
     HGDIOBJ old = SelectObject(dc, f.title);
     put(dc, px(28), 0, W, bar, "Harpia", C_HI, DT_LEFT);
+    const int title_w = width(dc, "Harpia");
     SelectObject(dc, f.small);
     put(dc, 0, 0, W - px(28), bar, "F1 / Insert", C_DIM, DT_RIGHT);
+    // (upstream 40c3f85: which build, beside the title, so a report can say it without opening the log)
+    put(dc, px(28) + title_w + px(14), 0, W - px(28) - width(dc, "F1 / Insert") - px(14), bar, HARPIA_VERSION, C_DIM, DT_LEFT);
     SelectObject(dc, f.tab);
     for (int t = 0, x = px(16); t < kTabs; t++) {   // the tab strip
         const char* s = T(S_TAB_DISPLAY + t);
-        const int tw = width(dc, s) + px(48);
+        const int tw = width(dc, s) + px(36);
         if (t == cur_tab) fill(dc, x, ty, tw, tb - ty, C_TABON), fill(dc, x, tb - th(3), tw, th(3), C_ACCENT);
         put(dc, x, ty, x + tw, tb, s, t == cur_tab ? C_HI : C_DIM, DT_CENTER);
         x += tw + px(4);
@@ -645,7 +878,7 @@ void paint_menu(HDC dc, uint32_t bw, uint32_t bh) {
     if (cur_tab == TAB_CONTROLS) paint_controls(dc, f, W);
     else if (cur_tab == TAB_INFO) paint_info(dc, f, W);
     else paint_rows(dc, f, W);
-    // the footer: what the chosen row does (up to two lines), then the keys
+    // the footer: what the chosen row does (as many lines as the longest description needs: measure_foot), then the keys
     const char* desc = "";
     const char* hint = T(S_I_HINT);
     if (cur_tab < TAB_CONTROLS) {
@@ -660,10 +893,11 @@ void paint_menu(HDC dc, uint32_t bw, uint32_t bh) {
     SelectObject(dc, f.mid);
     SetTextColor(dc, C_TEXT);
     const std::wstring d = wide(desc);
-    RECT dr{px(36), foot + px(12), W - px(36), foot + px(66)};
+    const int desc_end = kDescTop + foot_line_h * foot_lines;
+    RECT dr{px(36), foot + px(kDescTop), W - px(36), foot + px(desc_end)};
     DrawTextW(dc, d.c_str(), (int)d.size(), &dr, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS);
     SelectObject(dc, f.small);
-    put(dc, px(36), foot + px(70), W - px(36), H - px(6), hint, C_DIM, DT_LEFT | DT_END_ELLIPSIS);
+    put(dc, px(36), foot + px(desc_end + 4), W - px(36), H - px(6), hint, C_DIM, DT_LEFT | DT_END_ELLIPSIS);
     fill(dc, 0, 0, W, th(1), C_LINE), fill(dc, 0, H - th(1), W, th(1), C_LINE);   // (a thin edge)
     fill(dc, 0, 0, th(1), H, C_LINE), fill(dc, W - th(1), 0, th(1), H, C_LINE);
     SelectObject(dc, old);
@@ -673,10 +907,25 @@ void paint_menu(HDC dc, uint32_t bw, uint32_t bh) {
 /// the tallest one's would be, so it grows down from one line when the tab changes
 void redraw_menu(uint32_t w, uint32_t h) {
     if (w < 64 || h < 64) return;
+    measure_foot();
     int tallest = 0;
     for (int t = 0; t < kTabs; t++) tallest = std::max(tallest, panel_h(t));
     ui = std::min({h / 1080.0f, 0.94f * (float)h / (float)tallest, 0.94f * (float)w / (float)kW});
     gdi_draw(menu_bmp, (uint32_t)px(kW), (uint32_t)px(panel_h(cur_tab)), paint_menu, ((int)h - px(tallest)) / 2);
+    if (const char* shot = getenv("RX_VK_MENU_SHOT")) {   // (hookshot 314cd6b) diagnosis: the menu as drawn, a .bmp; the frame's screenshots come before it
+        std::lock_guard lk(bmp_mu);
+        if (FILE* f = fopen(shot, "wb")) {
+            const uint32_t bytes = menu_bmp.w * menu_bmp.h * 4;
+            BITMAPFILEHEADER fh{0x4D42, (DWORD)(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + bytes), 0, 0,
+                                sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER)};
+            BITMAPINFOHEADER ih{sizeof ih, (LONG)menu_bmp.w, -(LONG)menu_bmp.h, 1, 32, BI_RGB};
+            std::vector<uint8_t> bgra(menu_bmp.px);   // (a .bmp is BGRA: gdi_draw swapped R and B for an RGBA swapchain)
+            if (dev.swap_format == VK_FORMAT_R8G8B8A8_UNORM || dev.swap_format == VK_FORMAT_R8G8B8A8_SRGB)
+                for (size_t i = 0; i + 3 < bgra.size(); i += 4) std::swap(bgra[i], bgra[i + 2]);
+            fwrite(&fh, sizeof fh, 1, f), fwrite(&ih, sizeof ih, 1, f), fwrite(bgra.data(), 1, bytes, f);
+            fclose(f);
+        }
+    }
 }
 
 char fps_text[48] = "";
@@ -763,8 +1012,14 @@ bool rows_input(const bool* press) {
     const int dir = press[K_RIGHT] || press[K_ENTER] ? 1 : press[K_LEFT] ? -1 : 0;
     if (dir) {
         Row& r = rows[idx[s]];
-        *r.value = stepped(r, dir);
+        *r.value = r.value == &opts.mouse_sens ? std::clamp(*r.value + dir * r.step, r.lo, r.hi) : stepped(r, dir);
+        if (r.value == &opts.pad_layout) apply_pad_layout(opts.pad_layout);
+        if (r.value == &opts.dlssg && opts.dlssg) opts.framegen = 0;   // (hookshot: one frame generation at a time)
+        if (r.value == &opts.framegen && opts.framegen) opts.dlssg = 0;
         changed = true;
+        // (upstream f447272: the preset sets its rows; a change of one of those makes it Custom)
+        if (r.value == &opts.preset) apply_preset(opts.preset);
+        else if (preset_row(r.value)) opts.preset = 0;
         legacy_sync();
         save();
     }
@@ -786,6 +1041,7 @@ bool controls_input(const bool* press, uint32_t raw, uint32_t pad_press, bool mi
                 while (!(p >> bit & 1)) bit++;
                 host->bind(HOS_BIND_PAD, controls[csel].button, 0, bit);
                 listening = 0, changed = true;
+                opts.pad_layout = detect_pad_layout();
                 save();
             }
         } else {
@@ -811,14 +1067,15 @@ bool controls_input(const bool* press, uint32_t raw, uint32_t pad_press, bool mi
     }
     if (press[K_UP]) csel = (csel + kControls) % (kControls + 1), changed = true;
     if (press[K_DOWN]) csel = (csel + 1) % (kControls + 1), changed = true;
-    if ((press[K_LEFT] || press[K_RIGHT]) && csel < kControls) ccol ^= 1, changed = true;
+    if ((press[K_LEFT] || press[K_RIGHT]) && csel < kControls && !keys_only(csel)) ccol ^= 1, changed = true;
+    if (keys_only(csel)) ccol = 1;   // (the stick's and the camera's directions: keys only)
     if (press[K_ENTER]) {
-        if (csel == kControls) host->bind(HOS_BIND_PAD, -1, 0, 0), save();
+        if (csel == kControls) host->bind(HOS_BIND_PAD, -1, 0, 0), opts.pad_layout = 0, save();
         else listening = ccol ? 2 : 1, listen_armed = false, listen_end = prof_now() + 6000000000LL;
         changed = true;
     }
     if ((press[K_DEL] || press[K_BACK]) && csel < kControls) {
-        if (ccol == 0) host->bind(HOS_BIND_PAD, controls[csel].button, 0, -1);
+        if (ccol == 0) host->bind(HOS_BIND_PAD, controls[csel].button, 0, -1), opts.pad_layout = detect_pad_layout();
         else for (int k = 0; k < 2; k++) host->bind(HOS_BIND_KEY, controls[csel].button, k, 0);
         changed = true;
         save();
@@ -837,7 +1094,9 @@ void menu_init() {
     done = true;
     language_load();
     bool seen[kRows] = {};
+    bool has_options = false;
     if (FILE* f = fopen(ini_path().c_str(), "r")) {
+        has_options = true;
         char line[256];
         bool has_resolution = false;
         bool v2 = false;
@@ -865,6 +1124,12 @@ void menu_init() {
     static const int from_resolution[] = {0, 100, 75, 67, 50};
     if (!seen[row_of(&opts.render_scale)]) opts.render_scale = from_resolution[opts.resolution];
     if (!seen[row_of(&opts.aspect)]) opts.aspect = opts.ultrawide ? 2 : 0;
+    // (upstream 068b505) An opt-in profile for 4 GB cards, only for a first start: an options file stays as it is.
+    // (local: the preset's rows, no budget, 598226f)
+    if (!has_options && getenv("RX_VK_LOW_SPEC") && atoi(getenv("RX_VK_LOW_SPEC")) != 0) {
+        opts.preset = 1, apply_preset(1);
+        opts.framegen = 0, opts.upscale = 0, opts.sharpness = 0;
+    }
     if (opts.framegen == 1) opts.framegen = 2;
     if (const char* e = getenv("RX_VK_FRAMEGEN_MULT")) opts.framegen = std::min(std::max(atoi(e), 2), 8);
     if (const char* e = getenv("RX_VK_PACE")) opts.pace = atoi(e) != 0;
@@ -874,6 +1139,7 @@ void menu_init() {
     for (Row& r : rows) *r.value = snap(r, *r.value);   // (local: only the values a row takes)
     legacy_sync();   // (local, review: a stale resolution= beside render_scale= no longer decides the scale)
     aspect_start = opts.aspect;
+    robust_start = opts.robust;
     // (local) Fog: RX_VK_OOT_VISUAL decides when it is set (harpia_env.txt); else the option, put in the environment before any
     // program is translated, so disk_stamp's RX_VK_OOT prefix keeps the program cache to it
     if (const char* e = getenv("RX_VK_OOT_VISUAL")) opts.classic_fog = atoi(e) != 0;
@@ -885,6 +1151,26 @@ void menu_init() {
 #endif
     }
     fog_start = opts.classic_fog;
+}
+
+// (hookshot: DLSS-G's 3x and 4x need an RTX 50 (Blackwell); other cards are offered 2x only. The device is known by now)
+static void dlssg_row_limit() {
+    const char* n = dev.props.deviceName;
+    rows[row_of(&opts.dlssg)].n = strstr(n, "RTX 50") || strstr(n, "Blackwell") ? 4 : 2;
+}
+
+void menu_set_gpu_count(int count) {   // (vk_main.cpp, once it has listed the devices)
+    Row& r = rows[row_of(&opts.gpu_device)];
+    r.hi = std::max(count, 0);
+    if (opts.gpu_device > r.hi) opts.gpu_device = 0;
+    gpu_device_at_start = opts.gpu_device;
+}
+
+void menu_option_set(int id, int value) {   // (from the game's side: 7 the mouse's sensitivity, the - and = keys)
+    if (id != 7) return;
+    opts.mouse_sens = std::clamp(value, 10, 500);   // (while the menu is closed: it shows it when opened)
+    menu_refresh = true;
+    save();
 }
 
 bool menu_is_open() { return open_now.load(std::memory_order_relaxed); }
@@ -958,6 +1244,8 @@ void menu_tick() {
         press[i] = down && !held[i];
         held[i] = down;
     }
+    // (review: Alt+Enter is fullscreen, host/display.c; not Enter on the chosen row too, as nn_hid.c's kmap_down)
+    if (press[K_ENTER] && (GetAsyncKeyState(VK_MENU) & 0x8000)) press[K_ENTER] = false;
     // (hookshot) the gamepads, by position: Home, or Back and Start together, as Insert; LB and RB as Q and E, the D-pad
     // as the arrows, the bottom face button as Enter, the right one as Esc (not while a binding waits for its button)
     static uint32_t pad_held = 0;
@@ -981,12 +1269,30 @@ void menu_tick() {
     if (press[K_MENU] || press[K_F1]) {
         open_now = !open_now.load(), changed = true;
         listening = 0;
+        // (upstream f1b5725: the host keeps the bindings, a saved layout is not applied over them at start)
+        if (open_now.load()) opts.pad_layout = detect_pad_layout(), dlssg_row_limit();
     }
     {   // (hookshot) RX_VK_MENU_OPEN=1 (diagnosis): the menu opened at the first frame, as Insert would, with no keyboard
         static bool forced = false;
-        if (!forced && getenv("RX_VK_MENU_OPEN")) {   // (=controls: on the Controls tab)
+        if (!forced && getenv("RX_VK_MENU_OPEN")) {   // (=<tab>: on that tab, e.g. controls, for screenshots of each)
             forced = true, open_now = true, changed = true;
-            if (!strcmp(getenv("RX_VK_MENU_OPEN"), "controls")) cur_tab = TAB_CONTROLS;
+            static const char* const tab_names[kTabs] = {"display", "graphics", "performance", "input", "controls", "info"};
+            for (int t = 0; t < kTabs; t++)
+                if (!strcmp(getenv("RX_VK_MENU_OPEN"), tab_names[t])) cur_tab = t;
+            // (hookshot: the rows each options tab shows, logged: the DLSS rows appear only with their DLLs)
+            for (int tab : {TAB_DISPLAY, TAB_GRAPHICS, TAB_PERF, TAB_INPUT}) {
+                int idx[kRows];
+                const int n = tab_rows(tab, idx);
+                std::string keys;
+                for (int i = 0; i < n; i++) keys += std::string(" ") + rows[idx[i]].key;
+                logf("vk: menu tab %d rows:%s", tab, keys.c_str());
+            }
+            // (local) RX_VK_MENU_ROW=<n>: that row of the tab chosen, so a screenshot shows its description in the footer
+            if (const char* r = getenv("RX_VK_MENU_ROW"); r && cur_tab < TAB_CONTROLS) {
+                int idx[kRows];
+                const int n = tab_rows(cur_tab, idx), want = atoi(r);
+                if (want >= 0 && want < n) sel_row[cur_tab] = want;
+            }
         }
     }
     if (open_now.load()) {

@@ -15,7 +15,20 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 2
+#define MKWVK_API_VERSION 4
+
+/* (hookshot) the controls' names (host/nn_hid.c, host/pad_sdl.c, the pad_ and key_ lines of harpia_options.ini):
+   the Switch's buttons in nn::hid's bit order, and a gamepad's inputs by position, SDL's order (the bottom face
+   button first: A on an Xbox pad, cross on a DualSense) */
+enum { HOS_SW_A, HOS_SW_B, HOS_SW_X, HOS_SW_Y, HOS_SW_LS, HOS_SW_RS, HOS_SW_L, HOS_SW_R, HOS_SW_ZL, HOS_SW_ZR,
+       HOS_SW_PLUS, HOS_SW_MINUS, HOS_SW_LEFT, HOS_SW_UP, HOS_SW_RIGHT, HOS_SW_DOWN, HOS_SW_N };
+enum { HOS_PAD_SOUTH, HOS_PAD_EAST, HOS_PAD_WEST, HOS_PAD_NORTH, HOS_PAD_BACK, HOS_PAD_GUIDE, HOS_PAD_START,
+       HOS_PAD_LSTICK, HOS_PAD_RSTICK, HOS_PAD_LSHOULDER, HOS_PAD_RSHOULDER, HOS_PAD_UP, HOS_PAD_DOWN, HOS_PAD_LEFT,
+       HOS_PAD_RIGHT, HOS_PAD_LTRIGGER, HOS_PAD_RTRIGGER, HOS_PAD_N };
+enum { HOS_BIND_PAD, HOS_BIND_KEY };
+/* keys only (HOS_BIND_KEY), after the Switch's buttons: the left stick's and the camera's directions */
+enum { HOS_KEY_MOVE_UP = HOS_SW_N, HOS_KEY_MOVE_DOWN, HOS_KEY_MOVE_LEFT, HOS_KEY_MOVE_RIGHT, HOS_KEY_CAM_UP,
+       HOS_KEY_CAM_DOWN, HOS_KEY_CAM_LEFT, HOS_KEY_CAM_RIGHT, HOS_KEY_N };
 
 /* what the executable gives the back end */
 typedef struct MkwVkHost {
@@ -58,23 +71,18 @@ typedef struct MkwVkHost {
     uint64_t (*guest_alloc)(uint64_t size);
     /// (debugging) CPU writes to [guest, guest + size) logged with the writer's guest call stack (a page watch)
     void (*watch_guest_writes)(uint64_t guest, uint64_t size);
-    /* (hookshot) the controls (host/nn_hid.c), for the Insert menu's Controls page. button: the Switch's, HOS_SW_*;
-       set HOS_BIND_PAD: the gamepad input that presses it (a HOS_PAD_* position, -1 none; slot 0 only); set
-       HOS_BIND_KEY: the keys that do (Windows key codes, 0 none; slots 0 and 1). bind with button -1: all back to
-       their defaults. pad_raw: the gamepads' inputs held now (1 << HOS_PAD_*), whatever they are bound to */
+    /* (hookshot) the gamepads' inputs held now (1 << HOS_PAD_*), whatever they are bound to: the Insert menu's
+       (host/nn_hid.c) */
+    uint32_t (*pad_raw)(void);
+    /* (hookshot) the controls, for the Insert menu's Controls page. button: the Switch's, HOS_SW_*; set HOS_BIND_PAD:
+       the gamepad input that presses it (a HOS_PAD_* position, -1 none; slot 0 only); set HOS_BIND_KEY: the keys that
+       do (Windows key codes, 0 none; slots 0 and 1; a mouse button's too, and HOS_KEY_* past the Switch's buttons).
+       bind with button -1: all back to their defaults */
     int (*binding)(int set, int button, int slot);
     void (*bind)(int set, int button, int slot, int code);
-    uint32_t (*pad_raw)(void);
+    /// The guest camera aspect explicitly applied at startup (0: its default aspect)
+    float (*aspect_ratio)(void);
 } MkwVkHost;
-
-/* (hookshot) the controls' names (MkwVkHost.binding): the Switch's buttons in nn::hid's bit order, and a gamepad's
-   inputs by position, SDL's order (the bottom face button first: A on an Xbox pad, cross on a DualSense) */
-enum { HOS_SW_A, HOS_SW_B, HOS_SW_X, HOS_SW_Y, HOS_SW_LS, HOS_SW_RS, HOS_SW_L, HOS_SW_R, HOS_SW_ZL, HOS_SW_ZR,
-       HOS_SW_PLUS, HOS_SW_MINUS, HOS_SW_LEFT, HOS_SW_UP, HOS_SW_RIGHT, HOS_SW_DOWN, HOS_SW_N };
-enum { HOS_PAD_SOUTH, HOS_PAD_EAST, HOS_PAD_WEST, HOS_PAD_NORTH, HOS_PAD_BACK, HOS_PAD_GUIDE, HOS_PAD_START,
-       HOS_PAD_LSTICK, HOS_PAD_RSTICK, HOS_PAD_LSHOULDER, HOS_PAD_RSHOULDER, HOS_PAD_UP, HOS_PAD_DOWN, HOS_PAD_LEFT,
-       HOS_PAD_RIGHT, HOS_PAD_LTRIGGER, HOS_PAD_RTRIGGER, HOS_PAD_N };
-enum { HOS_BIND_PAD, HOS_BIND_KEY };
 
 /* what the back end gives the executable: the rx_* functions (gpu/render/rx_nvn.h, rx_core) */
 typedef struct MkwVkRenderer {
@@ -102,7 +110,9 @@ typedef struct MkwVkRenderer {
                              const uint8_t *src, uint64_t row_pitch, uint64_t image_pitch);
     void (*nvn_invalidate)(uint64_t gpu, uint64_t size);
     void (*nvn_pool_created)(uint64_t gpu, uint64_t size);   /* a memory pool made (non-virtual): imported early */
-    /* whether the GPU may use guest memory in [lo, hi) through an import (the host keeps such pages committed) */
+    /* whether the GPU may use guest memory in [lo, hi) through an import (the host keeps such pages committed): 1 under
+       an import (the host zeroes them), 2 not imported and decommitted by the back end under its lock (the host must not
+       decommit again), 0 not handled (the host decommits) */
     int (*guest_imported)(uint64_t lo, uint64_t hi);
     /* virtual pages [gpu, gpu + size) mapped now are about to be unmapped or remapped (the old mapping still in place):
        what the GPU wrote into textures there goes into their memory first */
@@ -111,9 +121,18 @@ typedef struct MkwVkRenderer {
     void (*nvn_texture_created)(const nvn_tex *t);
     /* the CPU set an event's value: in order with the submits (the GPU's waits on it) */
     void (*nvn_event_signal)(uint64_t gpu, uint32_t value);
-    int (*option)(int id);   /* (hookshot, the Insert menu) 0: game time follows the clock, 1: the menu is open, 2: dynamic resolution, 3: its fixed scale in percent */
+    int (*option)(int id);   /* (hookshot, the Insert menu) 0: game time follows the clock, 1: the menu is open, 2: dynamic resolution, 3: its fixed scale in percent, 4: the controllers count behind other windows, 5: text speed (0 normal to 3 instant), 6: native mouse look (host/mouse_native.c),
+                                7: the mouse's sensitivity in percent, 8: its up and down swapped (host/nn_hid.c) */
     /* a submit with its queue */
     void (*nvn_submit_q)(const uint64_t *handles, int n, uint64_t queue);
+    /* (hookshot) a fence of one queue: the value its own last submission signals (nvnQueueFenceSync) */
+    uint64_t (*nvn_fence_q)(uint64_t queue);
+    /* (hookshot, the Insert menu) a setting changed from the game's side, kept in the options file: 7 the mouse's sensitivity
+       in percent (the - and = keys, host/nn_hid.c) */
+    void (*option_set)(int id, int value);
+    /* (hookshot) the game's frame starts (its window texture's acquire, after the host's pacing, host/nn_vi.c): NVIDIA Reflex's
+       sleep and marker while DLSS Frame Generation runs (gpu/vk/vk_dlss.cpp); 1 when Reflex's sleep ran */
+    int (*frame_start)(void);
 } MkwVkRenderer;
 
 /* the DLL's one export: null when Vulkan is not usable (the executable then falls back to WebGPU) */

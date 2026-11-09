@@ -12,3 +12,7 @@ copy can be refreshed from upstream by copying the files again.
 
 Licensing: `lift/suyu/arm64_to_c.h` is suyu's (GPL-2.0-or-later, texts in `lift/suyu/`), so `a64emit.dll`, the
 generated runtime and all lifted C are GPL. See `NOTICE.TOTKPort.md`.
+
+Harpia's one change inside this folder: `tools/toolchain.py` reads `HARPIA_MINGW` (the llvm-mingw folder for a cross
+build) where Hookshot's read `HOOKSHOT_MINGW`; the two notes there are tagged "(hookshot, harpia)".
+

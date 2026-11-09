@@ -9,9 +9,13 @@
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
+#include "hos_paths.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef HARPIA_VERSION   /* (nx2/build.py gives it: the release and a fingerprint of the sources, nx2/version.py) */
+#define HARPIA_VERSION "unknown"
+#endif
 #if defined(_WIN32) || defined(__EMSCRIPTEN__)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -19,6 +23,13 @@
 #else
 #include <windows.h>   /* (linux: host/posix's) */
 #include <sys/mman.h>
+#ifdef __linux__
+#include <sys/prctl.h>
+#endif
+#include <errno.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/syscall.h>
 #endif
 /* (linux) the separator of the paths the executable's folder is joined with */
 #ifdef _WIN32
@@ -98,6 +109,9 @@ static void *reserve_large(SIZE_T size) {
 }
 #endif
 
+#if !defined(_WIN32) && !defined(A64_MEM_ZERO)
+extern int hos_guest_memfd;   /* (below) */
+#endif
 /* The guest window lives at the constant A64_HOST_BASE (rt/a64.h), so lifted code never loads its base. */
 static int reserve_guest(void) {
 #if defined(A64_MEM_ZERO)
@@ -126,10 +140,75 @@ static int reserve_guest(void) {
        step: MAP_NORESERVE). Decommitting is madvise (host/posix/win32_posix.c VirtualFree): the pages read as zero. */
     void hos_commit_init(void);
     hos_commit_init();   /* (the crash report) */
-    return mmap((void *)A64_HOST_BASE, GUEST_SPACE, PROT_READ | PROT_WRITE,
-                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_NORESERVE, -1, 0) == (void *)A64_HOST_BASE;
+    /* The window is a memfd's, shared, so the Vulkan back end can hand the GPU the game's own pages as a dma-buf
+       (udmabuf, gpu/vk/vk_memory.cpp import_dma_buf) instead of a host pointer: amdgpu checks every page of a host-pointer
+       import again at each command submission, 15-45 ms a submission in Kokiri Forest. Pages of a shared mapping are freed
+       with MADV_REMOVE, not MADV_DONTNEED (hos_posix_guest_discard). HOS_GUEST_MEMFD=0: anonymous memory, as before */
+    {
+        /* (only where /dev/udmabuf can be opened: a shared mapping's pages cannot be host-pointer imports (RADV:
+           VK_ERROR_INVALID_EXTERNAL_HANDLE), so a pool udmabuf refused would be no import at all. A pool larger than udmabuf's
+           size_limit_mb (64 MB unless raised) is imported as several dma-bufs bound into one sparse buffer, so no setting is
+           needed. HOS_GUEST_MEMFD=1: the memfd all the same) */
+        const char *e = getenv("HOS_GUEST_MEMFD");
+        int usable = 0;
+        unsigned long long limit_mb = 0;
+        {
+            const int u = open("/dev/udmabuf", O_RDWR | O_CLOEXEC);
+            if (u >= 0) {
+                close(u);
+                FILE *f = fopen("/sys/module/udmabuf/parameters/size_limit_mb", "r");
+                if (f) {
+                    if (fscanf(f, "%llu", &limit_mb) != 1) limit_mb = 0;
+                    fclose(f);
+                }
+                usable = limit_mb > 0;
+            }
+            if (!usable && !e)
+                hos_log("mem: guest memory stays host-pointer imports for the GPU (slow submissions on AMD): %s",
+                        u < 0 ? "/dev/udmabuf cannot be opened" : "udmabuf's size_limit_mb cannot be read");
+        }
+        if (e ? atoi(e) != 0 : usable) {
+            const int fd = (int)syscall(SYS_memfd_create, "harpia-guest", 1u /* MFD_CLOEXEC */ | 2u /* MFD_ALLOW_SEALING */);
+            if (fd >= 0 && ftruncate(fd, (off_t)GUEST_SPACE) == 0) {
+                fcntl(fd, 1033 /* F_ADD_SEALS */, 0x0002 /* F_SEAL_SHRINK */ | 0x0004 /* F_SEAL_GROW */);
+                void *p = mmap((void *)A64_HOST_BASE, GUEST_SPACE, PROT_READ | PROT_WRITE,
+                               MAP_SHARED | MAP_FIXED_NOREPLACE | MAP_NORESERVE, fd, 0);
+                if (p == (void *)A64_HOST_BASE) {
+                    hos_guest_memfd = fd;
+                    hos_log("mem: the guest window is a memfd's (%d), shared with the GPU as dma-bufs", fd);
+                    return 1;
+                }
+                if (p != MAP_FAILED) munmap(p, GUEST_SPACE);
+            }
+            if (fd >= 0) close(fd);
+            hos_log("mem: no memfd for the guest window (errno %d): anonymous memory", errno);
+        }
+    }
+    if (mmap((void *)A64_HOST_BASE, GUEST_SPACE, PROT_READ | PROT_WRITE,
+             MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_NORESERVE, -1, 0) != (void *)A64_HOST_BASE)
+        return 0;
+    /* (issue 312) no transparent huge pages in the guest window: the renderer imports its pools as userptr memory, and every
+       collapse khugepaged makes in them changes their mappings, which the kernel answers by pinning the pages again at the
+       next submission: ~250 ms a submit on RADV while the GPU sat idle. HOS_THP=1: as before */
+    if (!getenv("HOS_THP")) madvise((void *)A64_HOST_BASE, GUEST_SPACE, MADV_NOHUGEPAGE);
+#ifdef __linux__
+    /* (HOS_NO_THP=1, experiment: none outside the window either. With THP "always" 400-450 MB of the host heap's and the binary's bss are huge
+       pages, each resident whole when any of its 2 MB is touched) */
+    if (getenv("HOS_NO_THP")) prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+#endif
+    return 1;
 #endif
 }
+
+#if !defined(_WIN32) && !defined(A64_MEM_ZERO)
+/* the guest window's memfd for the Vulkan back end (-1: anonymous memory), and freeing guest pages so that
+   they read as zero again on either kind of mapping */
+int hos_guest_memfd = -1;
+int hos_posix_guest_memfd(void) { return hos_guest_memfd; }
+int hos_posix_guest_discard(void *p, size_t n) {
+    return madvise(p, n, hos_guest_memfd >= 0 ? MADV_REMOVE : MADV_DONTNEED);
+}
+#endif
 
 /* The guest window, for the renderer (gpu/render/rx_buffer.cpp). */
 uint8_t *hos_guest_base(void) { return A64_MEM; }
@@ -262,12 +341,19 @@ static const char *saves_dir(const char *beside) {
 
 /* harpia_env.txt beside the game: NAME=VALUE lines set as environment variables before anything reads them, for the
    switches players are asked to test (RX_VK_NOOPT and the rest). Lines starting with # are notes. On Linux this runs
-   before the window, so HOS_HEADLESS and HOS_WINDOW_SIZE are already set when the window is made. */
+   before the window, so HOS_HEADLESS and HOS_WINDOW_SIZE are already set when the window is made.
+   HOS_ENV_FILE=<path> reads that file instead: a scripted or A/B test run brings its own switches and leaves the
+   player's harpia_env.txt as it is. */
 static void load_harpia_env(void) {
     char path[MAX_PATH + 32];
-    DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
-    while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
-    memcpy(path + n, "harpia_env.txt", sizeof "harpia_env.txt");
+    const char *other = getenv("HOS_ENV_FILE");
+    if (other && *other) {
+        snprintf(path, sizeof path, "%s", other);
+    } else {
+        DWORD n = hos_game_path_a(path, MAX_PATH);
+        while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
+        memcpy(path + n, "harpia_env.txt", sizeof "harpia_env.txt");
+    }
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[512];
@@ -290,6 +376,16 @@ static void load_harpia_env(void) {
 }
 
 float hos_aspect_ratio = 0;   /* (the window's default shape: host/display.c) */
+/* (nx2/oot_wide.py) read by the widescreen patches in the game's code; 0: the game's own 16:9 */
+volatile uint64_t hos_wide_out, hos_wide_scene;
+volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
+/* (nx2/oot_occlusion.py) read by the game's code where it decides to make occlusion queries: 1, none (HARPIA_OCCLUSION_OFF=1) */
+volatile int hos_occlusion_off;
+static void occlusion_switch(void) {
+    const char *e = getenv("HARPIA_OCCLUSION_OFF");
+    hos_occlusion_off = e && e[0] == '1';
+    if (hos_occlusion_off) hos_log("occlusion off: the game makes no occlusion queries (HARPIA_OCCLUSION_OFF=1)");
+}
 #ifdef _WIN32
 /* (hookshot) On laptops with two GPUs, the drivers run a program on the dedicated one when it exports these (NVIDIA Optimus, AMD
    PowerXpress): without them a laptop could put the game on its integrated GPU, 5 fps (issue 176) */
@@ -302,6 +398,9 @@ static int game_main(int argc, char **argv) {
 #endif
 #ifdef _WIN32
     load_harpia_env();
+#endif
+    occlusion_switch();
+#ifdef _WIN32
     {   // (the whole process, not only the window's thread: the renderer asks the window's size from its own, and on a 4K screen at 150%
         // Windows answered such a thread 2560 x 1440: the picture was that size, in the corner of the window. Hookshot issues 15, 18, 20)
         typedef BOOL(WINAPI * SetAware)(void *);
@@ -313,23 +412,47 @@ static int game_main(int argc, char **argv) {
         HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
         if (!err || err == INVALID_HANDLE_VALUE || GetFileType(err) == FILE_TYPE_UNKNOWN) {
             char path[MAX_PATH + 32];
-            DWORD n = GetModuleFileNameA(NULL, path, MAX_PATH);
+            DWORD n = hos_game_path_a(path, MAX_PATH);
             while (n && path[n - 1] != 92 && path[n - 1] != 47) n--;
+            /* (the four runs before stay as harpia_log.1.txt (the last) to .4.txt: a player who started the game again after a
+               crash sent in the new run's log, and the crash was gone) */
+            char from[MAX_PATH + 32], to[MAX_PATH + 32];
+            for (int k = 4; k >= 1; k--) {
+                if (k == 1) memcpy(from + n, "harpia_log.txt", sizeof "harpia_log.txt"), memcpy(from, path, n);
+                else memcpy(from, path, n), snprintf(from + n, 32, "harpia_log.%d.txt", k - 1);
+                memcpy(to, path, n), snprintf(to + n, 32, "harpia_log.%d.txt", k);
+                MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING);
+            }
             memcpy(path + n, "harpia_log.txt", sizeof "harpia_log.txt");
             if (freopen(path, "w", stderr)) setvbuf(stderr, NULL, _IONBF, 0);
         }
     }
+    hos_log("harpia %s", HARPIA_VERSION);   /* (the log's first line: which build a report comes from) */
     const char *image = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--romfs") && i + 1 < argc) hos_romfs_dir = argv[++i];
         else if (!strcmp(argv[i], "--user") && i + 1 < argc) hos_user_dir = argv[++i];
         else if (!strcmp(argv[i], "--trace")) hos_trace = 1;
+        else if (!strcmp(argv[i], "--prepare-shaders")) {   /* (hookshot) a build's last step: no game */
+#ifdef _WIN32
+            _putenv("HARPIA_PREPARE_ONLY=1");
+#else
+            setenv("HARPIA_PREPARE_ONLY", "1", 1);
+#endif
+            int rx_prepare_shaders(void);
+            if (rx_prepare_shaders()) {
+                printf("@@done shaders\n");
+                return 0;
+            }
+            printf("@@error no usable Vulkan here: the game prepares its shaders at its first start\n");
+            return 3;
+        }
         else if (!image) image = argv[i];
     }
     static char beside_image[MAX_PATH], beside_romfs[MAX_PATH], beside_user[MAX_PATH];
     if (!image) {   /* (hookshot) started with nothing, as a game is: everything beside the executable (the builder's folder) */
         char dir[MAX_PATH];
-        const DWORD len = GetModuleFileNameA(NULL, dir, MAX_PATH);
+        const DWORD len = hos_game_path_a(dir, MAX_PATH);
         char *slash = len ? strrchr(dir, SEP) : NULL;
         if (slash) {
             *slash = 0;
@@ -391,18 +514,17 @@ static int game_main(int argc, char **argv) {
         return 1;
     }
     hos_mem_init(hos_image_end);
-    {   /* (hookshot) HOS_ASPECT=<ratio> (2.3889 for 3440x1440): the one 16:9 constant in the game's data, read by the camera and the
-           scene setup, at the window's shape. The picture stays 16:9 and is stretched to the window, so the 3D keeps its proportions
-           and the HUD stretches with it. */
+    {   /* (hookshot) Widescreen and ultrawide (nx2/oot_wide.py): HOS_ASPECT=<ratio> (2.3889 for 3440x1440), else the Insert menu's
+           Aspect Fill (2; the legacy "ultrawide=1" when there is no "aspect=" line) takes the main monitor's shape. Wider than 16:9:
+           the game's picture takes that shape at its own height (Hor+: the world wider at the sides), its 16:9 cameras the picture's
+           ratio, the HUD, menus and movies the middle 16:9. (local) Narrower than 16:9 (16:10): as before, the one 16:9 constant in
+           the game's data at the window's shape, the picture stretched to the window. Off unless Fill is chosen. */
         const char *e = getenv("HOS_ASPECT");
-        uint8_t *at = (uint8_t *)A64_MEM + 0x83e6131cull;
-        float was, want = e ? (float)atof(e) : 0.0f;
-        memcpy(&was, at, 4);
-        if (!e) {   /* (the Insert menu's Aspect, Fill (2): the main monitor's shape; local: the legacy "ultrawide=1" when there is no
-                       "aspect=" line; any shape but 16:9, 16:10 included, no longer only wider than 1.8) */
+        float want = e ? (float)atof(e) : 0.0f;
+        if (!e) {
             int on = 0, aspect = -1;
             char path[MAX_PATH];
-            const DWORD len = GetModuleFileNameA(NULL, path, MAX_PATH);
+            const DWORD len = hos_game_path_a(path, MAX_PATH);
             char *slash = len ? strrchr(path, SEP) : NULL;
             if (slash) {
                 snprintf(slash + 1, (size_t)(path + MAX_PATH - slash - 1), "harpia_options.ini");
@@ -420,20 +542,40 @@ static int game_main(int argc, char **argv) {
             const int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
             const float r = sh > 0 ? (float)sw / (float)sh : 0.0f;
             if (on && (r < 1.7728f || r > 1.7828f)) want = r;   /* (16:9 give or take DPI scaling's rounding: nothing to do) */
-            if (on) hos_log("boot: aspect Fill: monitor %dx%d, ratio %.4f%s", sw, sh, r, want > 1.0f ? "" : " (16:9 or taller: as is)");
+            if (on) hos_log("boot: aspect Fill: monitor %dx%d, ratio %.4f%s", sw, sh, r, want > 1.0f ? "" : " (16:9: as is)");
         }
-        if (want > 1.0f && was > 1.777f && was < 1.778f) {
-            memcpy(at, &want, 4);
-            hos_aspect_ratio = want;
-            hos_log("boot: aspect ratio %.4f in place of %.4f", want, was);
-        } else if (want > 1.0f) {
-            hos_log("boot: aspect: the constant reads %.4f here: left alone", was);
+        extern volatile uint64_t hos_wide_out, hos_wide_scene;
+        extern volatile float hos_wide_ratio, hos_wide_squeeze, hos_wide_margin;
+        const double game = 16.0 / 9.0;
+        if (want > game * 1.01) {
+            double r = want > 32.0 / 9.0 ? 32.0 / 9.0 : want;
+            const unsigned oh = 1440, ow = (unsigned)(oh * r / 8 + 0.5) * 8;   /* (whole multiples of 8 pixels) */
+            const unsigned sh = 1080, sw = (unsigned)(ow * 0.75 / 8 + 0.5) * 8;   /* (the scene, 3/4 of the picture as shipped) */
+            hos_wide_out = (uint64_t)oh << 32 | ow;
+            hos_wide_scene = (uint64_t)sh << 32 | sw;
+            hos_wide_ratio = (float)ow / (float)oh;
+            hos_wide_squeeze = (float)(game / ((double)ow / oh));
+            hos_wide_margin = (1.0f - hos_wide_squeeze) / 2.0f;
+            hos_aspect_ratio = hos_wide_ratio;
+            hos_log("boot: widescreen: picture %ux%u, scene %ux%u, camera ratio %.4f, HUD and movies in the middle %.1f%%", ow, oh, sw, sh,
+                    (double)hos_wide_ratio, hos_wide_squeeze * 100.0);
+        } else if (want > 1.0f) {   /* (local: narrower than 16:9, 16:10 among them: the constant, as before this merge) */
+            uint8_t *at = (uint8_t *)A64_MEM + 0x83e6131cull;
+            float was;
+            memcpy(&was, at, 4);
+            if (was > 1.777f && was < 1.778f) {
+                memcpy(at, &want, 4);
+                hos_aspect_ratio = want;
+                hos_log("boot: aspect ratio %.4f in place of %.4f", want, was);
+            } else {
+                hos_log("boot: aspect: the constant reads %.4f here: left alone", was);
+            }
         }
     }
     hos_log("boot: image %zu MB at %#llx, %llu MB of memory for the game", n >> 20, IMAGE_BASE,
             (unsigned long long)(hos_total_memory >> 20));
     void hos_mods_init(const char *image_path);
-    hos_mods_init(image);   /* mods.c: <exe folder>\mods (RomFS files, exefs data patches) */
+    hos_mods_init(image);   /* mods.c: <exe folder>\mods (RomFS files) */
 
     Ctx *c = hos_boot_main_thread(hos_main_stack_size);
     uint64_t sp = c->x[31];

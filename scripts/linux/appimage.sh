@@ -3,7 +3,8 @@
 # nothing made from it is in it: the game is built from the player's own copy, as on Windows.
 #
 #   scripts/linux/deps.sh        (first: the compiler, Python, FFmpeg, SDL2, headers into build-linux/deps)
-#   scripts/linux/appimage.sh    -> build-linux/Harpia-x86_64.AppImage
+#   scripts/linux/appimage.sh    -> build-linux/Harpia-<version>-x86_64.AppImage
+# The same image builds the game and, with --play, starts the one it saved.
 #
 # Built on the oldest system it is for (CI: Ubuntu 22.04): the sysroot it carries is that system's C library, so the
 # game it builds runs on glibc 2.35 and newer. work/ (hot_funcs.txt, hot_order.txt, harpia_pieces.prof,
@@ -14,14 +15,14 @@ ROOT=$PWD
 B=$ROOT/build-linux
 DEPS=${DEPS:-$B/deps}
 APPDIR=$B/AppDir
-VERSION=${HARPIA_VERSION:-$(git describe --tags --always 2>/dev/null || echo dev)}
+VERSION=${HARPIA_VERSION:-$(git describe --tags --always --match "v[0-9]*" 2>/dev/null || echo dev)}
 export EMSDK=$DEPS/emsdk RX_CPM=$DEPS/cpm
 PY=$DEPS/python/bin/python3
 
 # ---- the Vulkan back end, built here once (it needs no game) ----
 VKW=$B/vk-work
 rm -rf "$VKW/sa/build/harpia_vk.so"
-OOT_WORK=$VKW RX_VK_ONLY=1 RX_RELEASE=1 "$PY" -I nx2/build.py --standalone --jobs "${JOBS:-$(nproc)}"
+OOT_WORK=$VKW RX_MARCH=x86-64-v3 RX_VK_ONLY=1 RX_RELEASE=1 "$PY" -I nx2/build.py --standalone --jobs "${JOBS:-$(nproc)}"
 VK=$VKW/sa/build/harpia_vk.so
 [ -f "$VK" ] || { echo "harpia_vk.so was not built"; exit 1; }
 
@@ -41,6 +42,8 @@ L=$APPDIR/usr/lib/harpia
 
 # ---- the tools (the sources the player's build compiles, and the scripts) ----
 cp -a nx2 host LICENSE readme.md assets "$T/"
+printf '%s
+' "$VERSION" > "$T/VERSION"   # (no git history in here: nx2/version.py reads the release name from it)
 mkdir -p "$T/builder" "$T/gpu/render" "$T/gpu/vk" "$T/third_party"
 cp -a builder/linux "$T/builder/"
 cp -a gpu/render/*.h "$T/gpu/render/"
@@ -104,7 +107,10 @@ cp assets/harpia.png "$APPDIR/harpia.png"
 mkdir -p "$APPDIR/usr/share/icons/hicolor/256x256/apps"
 cp assets/harpia.png "$APPDIR/usr/share/icons/hicolor/256x256/apps/harpia.png"
 
+# (the update list, beside AppRun and not inside a hashed part: harpia-linux.txt names each part's checksum)
+python3 scripts/linux/make_parts.py "$APPDIR" "$VERSION" "$B/parts"
+
 OUT=$B/Harpia-$VERSION-x86_64.AppImage
 rm -f "$OUT"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$DEPS/appimagetool" --comp zstd "$APPDIR" "$OUT"
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$DEPS/appimagetool" --runtime-file "$DEPS/runtime-x86_64" --comp zstd "$APPDIR" "$OUT"
 echo "$OUT: $(du -h "$OUT" | cut -f1)"

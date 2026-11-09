@@ -41,4 +41,17 @@ Harpia `gpu/vk` ports in the black-flash / translator round (branch `p3-flashes`
   finding from ocarina-recomp commit 0cf12aa (GPL-3.0) that NVIDIA writes zeros to channels a fragment shader leaves
   unwritten; none of its code is copied.
 
-`gpu/vk/host_shaders/*_comp_spv.h` (ASTC decoder, BC encoder, block-linear unswizzle 2D/3D) are compiled SPIR-V of Eden's host shaders (GPL-3.0-or-later, Eden Emulator Project); the GLSL sources are not vendored here, only their generated arrays.
+`gpu/vk/host_shaders/` holds three compute shaders and the SPIR-V arrays generated from them
+(`*_comp_spv.h`, glslang 16.6.0 = `// 1116.6.0`, `glslang -V --target-env vulkan1.1 --vn <NAME>`). The `.comp` files are
+**Eglantine's** (Eglantine-Community/Eglantine, branch `nx2`, GPL-3.0-or-later, Eden Emulator Project headers kept
+untouched) and are the preferred form of the arrays; compiling them reproduces the shipped words exactly (checked word
+for word, and by `tests/test_host_shader_sources.py` when glslang is available):
+
+| File | Eglantine `nx2` commit | Why that commit |
+|---|---|---|
+| `astc_decoder.comp` | `c556de5c9ac5385faff6da8dd1694a93a77c35e4` (2026-10-28) | the Switch 2 GOB layout |
+| `bc_encoder.comp` | `0d5534a2883329183ae8aa89b3fe1c7b67291ece` (2026-10-29) | "ASTC: decode and re-compress to BC1/BC3 on the GPU" |
+| `block_linear_unswizzle_2d.comp` | `51207c73c889dbdc4a586a5da23314f6d33e4eb9` (2026-10-28) | the Switch 2 GOB layout |
+
+The files are identical at those commits and at `nx2` `78743f30` (2026-11-08). The 3D unswizzle array, which nothing
+included, was deleted (upstream Hookshot did the same in `f871bfd`).
