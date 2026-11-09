@@ -11,6 +11,7 @@ import importlib.util
 import io
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,7 +38,9 @@ class Toolchain:
     def find(self, name):
         if name not in ("clang++", "clang"):   # (check_mingw asks for clang since PR 434)
             raise AssertionError("Unexpected tool requested: " + name)
-        return self.compiler
+        # (as toolchain.find does: the compiler's full path when it is on PATH; make_game.check_windows_sdk tests it with
+        # os.path.isfile, so a bare "clang++" from --cxx would read as "no compiler found")
+        return shutil.which(self.compiler) or self.compiler
 
     def need(self, path):
         return path
