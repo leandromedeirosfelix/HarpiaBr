@@ -94,7 +94,7 @@ Harpia is **under active development**. The game runs and is playable; rough edg
 
 ## Install
 
-1. **Download `HarpiaSetup.exe`** from the [Releases](../../releases) tab (v1.0.0 is on its way; if the Releases page is still empty, check back soon).
+1. **Download `HarpiaSetup.exe`** from the [Releases](../../releases/latest) tab (version 1.0.0). The page also has `SHA256SUMS.txt`, to check the downloaded file.
 2. **Run it.** It shows the licence and notices, asks for a folder (default `%LOCALAPPDATA%\Harpia`), installs without administrator rights, creates shortcuts and opens the Builder. Nothing is downloaded: everything is inside the file.
 3. In the **Builder**, look at the **PC check**: it reads CPU, memory, drive, graphics card and build tools, says whether a build is possible and about how long it takes. If Build Tools or the Windows SDK are missing, a screen explains and links to the download.
 4. **Point it at your game.** The Builder looks for `.nup` files in Downloads, Desktop and Documents (up to three folders down) and also lets you **drag the `.nup`** onto the window, or the `romfs` and `exefs` folders. The `.nup` is an already decrypted package holding, for each title, the `exefs/` and `romfs/` trees; it comes from *a dump you made of your own game*, and this project does not teach how to make it.
@@ -159,7 +159,7 @@ Inside the menu: <kbd>Q</kbd> / <kbd>E</kbd> switch tab, <kbd>↑</kbd> <kbd>↓
 
 ## Known issues
 
-- **Torch and stick flames** (Deku Stick) sometimes without animation, and **lighting a bit too bright** in some scenes: fixes in progress.
+- **Torch and stick flames** (Deku Stick) without animation: handled in this version; report it if you still see it. **Lighting a bit too bright** in some scenes: adjustment in progress.
 - **Flashes:** now and then a frame comes out unlit (silhouettes). A detector exists (`RX_VK_DARKLOG`) and several causes have been ruled out; the root cause is still being investigated.
 - **First-run stutter:** a new area's shaders are compiled during play. From the second run on, the cache avoids almost all of it.
 - **GPU device loss** (*device lost*), rare, seen in development testing; the probable causes were fixed and the case remains under observation.
@@ -171,9 +171,9 @@ Found another? See [how to report a bug](CONTRIBUTING.en.md#reporting-a-bug).
 
 ## Roadmap
 
-**Done** (one step per commit in the history): upstream update (foliage, lighting, movies, device-loss fix) · sturdier shader cache · translator fixes and the dark-frame detector · CPU performance · native 2.5K output and Ultra textures · DLSS Super Resolution and DLSS Frame Generation with Reflex · menu in the Harpia look · Harpia Builder with the PC check and `HarpiaSetup.exe`.
+**Done** (one step per commit in the history): upstream update (foliage, lighting, movies, device-loss fix) · sturdier shader cache · translator fixes and the dark-frame detector · CPU performance · native 2.5K output and Ultra textures · DLSS Super Resolution and DLSS Frame Generation with Reflex · menu in the Harpia look · Harpia Builder with the PC check, `HarpiaSetup.exe` and the optional "Enable NVIDIA DLSS" step.
 
-**In progress:** a shipped pipeline list (fewer first-run stutters) · a frames-in-flight limit (latency) · torch flames and lighting · the cause of the flashes · the Builder's "Enable NVIDIA DLSS" step.
+**In progress:** a shipped pipeline list (fewer first-run stutters) · a frames-in-flight limit (latency) · lighting a bit too bright · the cause of the flashes.
 
 **Planned:** colour adjustment and a performance panel · technical documentation in Portuguese.
 

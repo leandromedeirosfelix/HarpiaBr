@@ -94,7 +94,7 @@ Harpia está **em desenvolvimento ativo**. O jogo roda e é jogável; ainda há 
 
 ## Instalar
 
-1. **Baixe o `HarpiaSetup.exe`** na aba [Releases](../../releases) (a v1.0.0 está saindo; se a página de Releases ainda estiver vazia, volte em breve).
+1. **Baixe o `HarpiaSetup.exe`** na aba [Releases](../../releases/latest) (versão 1.0.0). A página traz também o `SHA256SUMS.txt`, para conferir o arquivo baixado.
 2. **Execute-o.** Ele mostra a licença e os avisos, pede uma pasta (padrão `%LOCALAPPDATA%\Harpia`), instala sem precisar de administrador, cria atalhos e abre o Builder. Nada é baixado: tudo vem dentro do arquivo.
 3. No **Builder**, veja a **Verificação do PC**: ela lê processador, memória, disco, placa e ferramentas de compilação, diz se dá para compilar e quanto deve demorar. Se faltarem o Build Tools ou o Windows SDK, uma tela explica e leva ao download.
 4. **Aponte para o seu jogo.** O Builder procura arquivos `.nup` em Downloads, Desktop e Documentos (até três pastas abaixo) e também aceita que você **arraste o `.nup`** para a janela, ou as pastas `romfs` e `exefs`. O `.nup` é um pacote já descriptografado que traz, para cada título, as árvores `exefs/` e `romfs/`; ele vem de um *dump feito por você, do seu próprio jogo*, e este projeto não ensina a fazê-lo.
@@ -159,7 +159,7 @@ Dentro do menu: <kbd>Q</kbd> / <kbd>E</kbd> trocam de aba, <kbd>↑</kbd> <kbd>�
 
 ## Problemas conhecidos
 
-- **Chama de tochas e varas** (Deku Stick) às vezes sem animação, e **iluminação um pouco clara demais** em algumas cenas: correções em andamento.
+- **Chama de tochas e varas** (Deku Stick) sem animação: tratada nesta versão; se ainda aparecer, reporte. **Iluminação um pouco clara demais** em algumas cenas: ajuste em andamento.
 - **Piscadas:** de vez em quando um quadro sai sem iluminação (silhuetas). Existe um detector (`RX_VK_DARKLOG`) e várias causas já foram descartadas; a causa raiz ainda é investigada.
 - **Travadas na primeira vez:** os shaders de uma área nova são compilados durante o jogo. A partir da segunda execução, o cache evita quase tudo.
 - **Perda de dispositivo da GPU** (*device lost*), rara, observada em testes de desenvolvimento; as causas prováveis já foram corrigidas, e o caso segue em observação.
@@ -171,9 +171,9 @@ Achou outro? Veja [como reportar um bug](CONTRIBUTING.md#reportar-um-bug).
 
 ## Roteiro
 
-**Concluído** (uma etapa por commit no histórico): atualização do projeto original (folhagem, iluminação, filmes, correção de perda de dispositivo) · cache de shaders robusto · correções do tradutor e detector de quadros escuros · desempenho de CPU · saída 2.5K nativa e textura Ultra · DLSS Super Resolution e DLSS Frame Generation com Reflex · menu no visual da Harpia · Harpia Builder com Verificação do PC e `HarpiaSetup.exe`.
+**Concluído** (uma etapa por commit no histórico): atualização do projeto original (folhagem, iluminação, filmes, correção de perda de dispositivo) · cache de shaders robusto · correções do tradutor e detector de quadros escuros · desempenho de CPU · saída 2.5K nativa e textura Ultra · DLSS Super Resolution e DLSS Frame Generation com Reflex · menu no visual da Harpia · Harpia Builder com Verificação do PC, `HarpiaSetup.exe` e a etapa opcional "Ativar NVIDIA DLSS".
 
-**Em andamento:** lista de pipelines distribuída pronta (para menos travadas na primeira vez) · limite de quadros em voo (latência) · chama das tochas e iluminação · a causa das piscadas · a etapa "Ativar NVIDIA DLSS" do Builder.
+**Em andamento:** lista de pipelines distribuída pronta (para menos travadas na primeira vez) · limite de quadros em voo (latência) · a iluminação um pouco clara · a causa das piscadas.
 
 **Planejado:** ajuste de cor e painel de desempenho · documentação técnica em português.
 
