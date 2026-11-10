@@ -438,6 +438,10 @@ PFN_vkGetInstanceProcAddr dlss_load() {
     if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) return refuse("no sl.interposer.dll beside the executable");
     if (!nvidia_card()) return refuse("no NVIDIA card");
     if (!sl::security::verifyEmbeddedSignature(path.c_str())) return refuse("sl.interposer.dll is not signed by NVIDIA");
+    // (local: Harpia) no Windows error box for a broken, partial or wrong DLL here, among the plugins slInit loads or the NGX
+    // libraries loaded later on other threads (a "Bad Image" box from the loader): such loads fail quietly, DLSS stays off and
+    // refuse() or Streamline's log says why. For the process, once DLSS is asked for: hard-error boxes are no use to a game
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
     const HMODULE m = LoadLibraryExW(path.c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!m) return refuse("sl.interposer.dll did not load");
     const auto get = [m](const char* name) { return (void*)GetProcAddress(m, name); };
@@ -508,7 +512,14 @@ bool dlss_dll_present() {
         if (!n || n >= MAX_PATH) return false;
         std::wstring p(exe, n);
         p.resize(p.find_last_of(L"\\/"));
-        return GetFileAttributesW((p + L"\\sl.interposer.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        const std::wstring dll = p + L"\\sl.interposer.dll";
+        if (GetFileAttributesW(dll.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+        // (local: Harpia) a broken, partial or foreign file of that name (a download cut short): no DLSS rows, as with none
+        if (!sl::security::verifyEmbeddedSignature(dll.c_str())) {
+            logf("sl: sl.interposer.dll beside the game is not a valid NVIDIA-signed file: DLSS off and hidden");
+            return false;
+        }
+        return true;
     }();
     // (and the game's device NVIDIA's, once it exists; and DLSS supported on it, once asked: the row is not offered for nothing)
     return present && (!dev.device || dev.props.vendorID == 0x10DE) &&
@@ -665,7 +676,8 @@ bool dlssg_dll_present() {
         if (!n || n >= MAX_PATH) return false;
         std::wstring p(exe, n);
         p.resize(p.find_last_of(L"\\/"));
-        return GetFileAttributesW((p + L"\\sl.dlss_g.dll").c_str()) != INVALID_FILE_ATTRIBUTES;
+        const std::wstring g = p + L"\\sl.dlss_g.dll";
+        return GetFileAttributesW(g.c_str()) != INVALID_FILE_ATTRIBUTES && sl::security::verifyEmbeddedSignature(g.c_str());
     }();
     if (!dll || !dlss_dll_present()) return false;
     if (sl_.mod && fg.asked) return fg_ready();   // (loaded at the start: Streamline's own answer)

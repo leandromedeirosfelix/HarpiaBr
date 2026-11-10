@@ -1206,6 +1206,185 @@ void wb_pages_note(uint64_t guest_lo, uint64_t guest_hi, uint64_t value) {
         wb_pruned_at = mem_completed;
     }
 }
+
+// ---- (Harpia) write-backs that land over the game's CPU writes ----
+// A write-back copies a GPU-written binding's whole range from the mirror into guest memory when the GPU gets to it, at the end
+// of its submission. The game's threads run a frame ahead: what the CPU wrote into such a range after the submission's capture
+// (a GPU particle system's parameters beside the records its compute writes) was overwritten by the mirror's older copy, and
+// every later capture held the old words: the lit Deku Stick's flame missing in most frames (RX_VK_SYNC_LIVE=1 and
+// RX_VK_NO_WRITEBACK=1 each brought it back). Fritchii 0c822822c / 8f09b0fd9 (zortos #805) and Lichii fixed the same in Eden.
+// On pages both write ("shared": a page the CPU wrote that a write-back covers, noted by the captures) the write-back now lands
+// on the CPU with a three-way compare once its submission is done: a byte is written where the GPU changed it (the mirror's
+// copy after the submission differs from its copy before) and the CPU did not (guest memory still holds the copy before).
+// The copies before are taken in the upload command buffer at the written binding, after the pool's sync; the rest of every
+// write-back is copied on the GPU as before, and so are readback pages (memory_note_readback: their refresh from guest memory
+// comes last of the uploads, after these copies). Landed before a capture copies pages, before a CPU read of GPU results
+// (vk_replay.cpp readback) and at each submission's start. RX_VK_WB_LAND=0: off (A/B)
+bool wb_land_on() {
+    static const bool v = !getenv("RX_VK_WB_LAND") || atoi(getenv("RX_VK_WB_LAND")) != 0;
+    return v;
+}
+bool rb_page(uint32_t page);   // (below, with rb_pages: pools_mu held)
+constexpr uint64_t kSharedCaptures = 256;   // (shared until 256 captures pass without the CPU writing it under a write-back)
+constexpr uint64_t kStageBytes = 4ull << 20, kSlot = 4096;
+std::mutex land_mu;   // (after pools_mu when both are held; wb_pages_mu and cap_ranges_mu are never taken under it)
+std::unordered_map<uint32_t, uint64_t> shared_pages;   // page -> captures_made when it was last seen shared
+struct LandStage {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation alloc = nullptr;
+    uint8_t* map = nullptr;
+    uint64_t used = 0, value = 0;   // (value: the newest submission that copies into it)
+    int open = 0;                   // (landings in it not applied yet)
+};
+std::vector<std::unique_ptr<LandStage>> land_stages;
+LandStage* land_cur = nullptr;   // (the stage this recording takes slots from)
+struct BeforeCopy {
+    LandStage* st;
+    uint64_t at;   // (the page's slot: byte i of the page at at + i)
+};
+std::unordered_map<uint32_t, BeforeCopy> land_before;   // (this recording: page -> its copy before)
+struct Landing {
+    uint64_t guest_lo, guest_hi;
+    LandStage* st;
+    uint64_t before, after;   // (offsets of guest_lo's byte in st)
+    uint64_t value;
+};
+std::deque<Landing> landings;   // (in submission order)
+int64_t st_land_parts, st_land_bytes, st_land_kept, st_land_full;
+/// A slot of kSlot bytes for the submission recorded now (land_mu held); null when no stage is free
+LandStage* land_slot(uint64_t value, uint64_t* at) {
+    if (!land_cur || land_cur->used + kSlot > kStageBytes) {
+        land_cur = nullptr;
+        for (auto& st : land_stages)
+            if (!st->open && st->value <= mem_completed && st->value < value) {
+                st->used = 0, land_cur = st.get();
+                break;
+            }
+        if (!land_cur) {
+            if (land_stages.size() >= 16) return nullptr;   // (64 MB of stages: the rest copied on the GPU as before)
+            auto st = std::make_unique<LandStage>();
+            void* map = nullptr;
+            if (!create_buffer_cached(kStageBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, st->buffer, st->alloc, &map, false) || !map)
+                return nullptr;
+            st->map = (uint8_t*)map;
+            land_cur = st.get();
+            land_stages.push_back(std::move(st));
+        }
+    }
+    land_cur->value = value;
+    *at = land_cur->used;
+    land_cur->used += kSlot;
+    return land_cur;
+}
+/// The three-way landing of n bytes: where the GPU changed a byte (after != before) and the CPU did not (guest still == before),
+/// guest takes the GPU's; where both changed it the CPU's write stays. Returns {bytes written, bytes kept for the CPU}
+std::pair<uint64_t, uint64_t> land_bytes(uint8_t* guest, const uint8_t* before, const uint8_t* after, uint64_t n) {
+    uint64_t wrote = 0, kept = 0;
+    for (uint64_t i = 0; i < n; i++) {
+        if (after[i] == before[i]) continue;   // (the GPU did not change it)
+        if (guest[i] != before[i]) {           // (the CPU wrote it since)
+            kept++;
+            continue;
+        }
+        guest[i] = after[i];
+        wrote++;
+    }
+    return {wrote, kept};
+}
+/// The captures: pages the CPU wrote that a write-back covers (the caller holds none of these locks)
+void note_shared_pages(const std::vector<uint32_t>& pages, uint64_t now) {
+    if (pages.empty()) return;
+    std::lock_guard lk(land_mu);
+    for (uint32_t pg : pages) shared_pages[pg] = now;
+    if (shared_pages.size() > 65536)
+        for (auto it = shared_pages.begin(); it != shared_pages.end();)
+            it = now - it->second >= kSharedCaptures ? shared_pages.erase(it) : std::next(it);
+}
+} // namespace
+/// The landings whose submissions are done, applied in order (any thread)
+void memory_apply_landings(uint64_t done) {
+    std::lock_guard lk(land_mu);
+    while (!landings.empty() && landings.front().value <= done) {
+        const Landing& l = landings.front();
+        invalidate_mapped(l.st->alloc, kStageBytes);
+        const uint8_t* before = l.st->map + l.before;
+        const uint8_t* after = l.st->map + l.after;
+        uint64_t avail = 0;
+        uint8_t* g = host->gpu_ptr(l.guest_lo, &avail);
+        if (g && avail >= l.guest_hi - l.guest_lo) {
+            const auto [wrote, kept] = land_bytes(g, before, after, l.guest_hi - l.guest_lo);
+            st_land_bytes += (int64_t)wrote, st_land_kept += (int64_t)kept;
+        }
+        l.st->open--;
+        landings.pop_front();
+    }
+}
+namespace {
+/// (pools_mu held) A written binding of a mirrored pool, synced: its shared pages' copies before, in the upload command buffer
+void land_snapshot(const Pool& p, uint64_t off, uint64_t size) {
+    if (!wb_land_on() || !size) return;   // (the caller binds a mirror in a recording)
+    uint64_t now;
+    {
+        std::lock_guard ck(cap_ranges_mu);
+        now = captures_made;
+    }
+    const uint64_t g0 = p.lo + off, g1 = p.lo + std::min(off + size, p.hi - p.lo);
+    std::lock_guard lk(land_mu);
+    if (shared_pages.empty()) return;
+    bool barrier = false;
+    for (uint64_t page = g0 >> kPageShift; page <= (g1 - 1) >> kPageShift; page++) {
+        const auto it = shared_pages.find((uint32_t)page);
+        if (it == shared_pages.end() || now - it->second >= kSharedCaptures || land_before.count((uint32_t)page) ||
+            rb_page((uint32_t)page))
+            continue;
+        uint64_t at = 0;
+        LandStage* st = land_slot(mem_rec_value, &at);
+        if (!st) {
+            st_land_full++;
+            return;
+        }
+        const uint64_t a = std::max(page << kPageShift, p.lo), b = std::min((page + 1) << kPageShift, p.hi);
+        VkCommandBuffer up = upload_command_buffer();
+        if (!barrier) full_barrier(up, "barrier (write-back landing: copies before)"), barrier = true;   // (after the sync's copies)
+        const VkBufferCopy r{a - p.lo, at + (a - (page << kPageShift)), b - a};
+        vkCmdCopyBuffer(up, p.mirror, st->buffer, 1, &r);
+        land_before[(uint32_t)page] = {st, at};
+    }
+}
+/// (pools_mu held, at the write-back) The runs' parts on pages with a copy before go to the stages (their copies after, landed on
+/// the CPU); the rest stays in runs, for the GPU's copy into guest memory
+void land_split(VkCommandBuffer cmd, const Pool& p, std::vector<VkBufferCopy>& runs) {
+    if (!wb_land_on()) return;
+    std::lock_guard lk(land_mu);
+    if (land_before.empty()) return;
+    std::vector<VkBufferCopy> keep;
+    std::map<VkBuffer, std::vector<VkBufferCopy>> to_stage;
+    for (const VkBufferCopy& r : runs) {
+        uint64_t at = r.srcOffset;
+        const uint64_t end = r.srcOffset + r.size;
+        while (at < end) {
+            const uint64_t page = (p.lo + at) >> kPageShift;
+            const uint64_t page_end = std::min(end, ((page + 1) << kPageShift) - p.lo);
+            const auto bc = land_before.find((uint32_t)page);
+            uint64_t slot = 0;
+            LandStage* st = bc != land_before.end() ? land_slot(mem_rec_value, &slot) : nullptr;
+            if (st && st == bc->second.st) {   // (both copies in one stage; otherwise the GPU copies it, as before)
+                const uint64_t in_page = p.lo + at - (page << kPageShift);
+                to_stage[st->buffer].push_back({at, slot + in_page, page_end - at});
+                landings.push_back({p.lo + at, p.lo + page_end, st, bc->second.at + in_page, slot + in_page, mem_rec_value});
+                st->open++;
+                st_land_parts++;
+            } else if (!keep.empty() && keep.back().srcOffset + keep.back().size == at) {
+                keep.back().size += page_end - at;
+            } else {
+                keep.push_back({at, at, page_end - at});
+            }
+            at = page_end;
+        }
+    }
+    for (const auto& [buf, rs] : to_stage) vkCmdCopyBuffer(cmd, p.mirror, buf, (uint32_t)rs.size(), rs.data());
+    runs.swap(keep);
+}
 } // namespace
 uint64_t memory_writeback_value(uint64_t guest, uint64_t size, bool* ever) {
     uint64_t v = 0;
@@ -1369,16 +1548,29 @@ std::unique_ptr<Capture> capture_make() {
     if (n > 0) {
         static const bool cap_wait = !getenv("RX_VK_CAPTURE_WAIT") || atoi(getenv("RX_VK_CAPTURE_WAIT")) != 0;
         uint64_t v = 0;
-        if (cap_wait) {
+        static thread_local std::vector<uint32_t> shared;   // (Harpia: the pages a write-back covers that the CPU wrote)
+        shared.clear();
+        if (cap_wait || wb_land_on()) {
             const uint64_t done = vk_timeline_completed();
             std::lock_guard lk(wb_pages_mu);
             if (!wb_pages.empty())
                 for (int64_t i = 0; i < n; i++) {
                     auto it = wb_pages.find(pages[i]);
-                    if (it != wb_pages.end() && it->second > done) v = std::max(v, it->second);
+                    if (it == wb_pages.end()) continue;
+                    if (wb_land_on()) shared.push_back(pages[i]);
+                    if (cap_wait && it->second > done) v = std::max(v, it->second);
                 }
         }
+        if (!shared.empty()) {
+            uint64_t now;
+            {
+                std::lock_guard ck(cap_ranges_mu);
+                now = captures_made;
+            }
+            note_shared_pages(shared, now);
+        }
         if (v) vk_timeline_wait(v);
+        if (wb_land_on()) memory_apply_landings(vk_timeline_completed());   // (the GPU's results in before the copies)
     }
     if (n > 0) {
         c->pages.assign(pages, pages + n);
@@ -2047,6 +2239,9 @@ void mirror_sync(Pool& p) {
 // GPU adds to. RX_VK_NO_RB_REFRESH=1: off ----
 namespace {
 std::unordered_map<uint32_t, uint64_t> rb_pages;   // (guest page -> mirror_epoch it was last read at)
+bool rb_page(uint32_t page) {   // (Harpia: a readback page, refreshed from guest memory: not landed on the CPU)
+    return rb_pages.count(page) != 0;
+}
 std::atomic<int64_t> st_rb_refresh{0};
 }
 void memory_note_readback(uint64_t guest, uint64_t size) {
@@ -2318,7 +2513,7 @@ BufferRef gpu_buffer_bind(uint64_t gpu, uint64_t size, bool written) {
         return remember({p->buffer, off, size, 0});
     }
     if (p->synced_epoch != mirror_epoch || p->sync_seg > texture_segment()) mirror_sync(*p);
-    if (written) writebacks.push_back({p, off, std::min(off + size, p->hi - p->lo)});
+    if (written) writebacks.push_back({p, off, std::min(off + size, p->hi - p->lo)}), land_snapshot(*p, off, size);
     return remember({p->mirror, off, size, 0});
 }
 
@@ -2529,6 +2724,12 @@ void imports_give_back() {   // (pools_mu held)
 
 void memory_begin_submission() {
     std::lock_guard lk(pools_mu);
+    memory_apply_landings(mem_completed);
+    {
+        std::lock_guard ll(land_mu);
+        land_before.clear();
+        land_cur = nullptr;
+    }
     reap_mirrors();
     retired_imports_give_back();
     mirror_epoch++;
@@ -2758,6 +2959,7 @@ void memory_end_submission(VkCommandBuffer cmd) {
                     runs.push_back({w.lo, w.lo, w.hi - w.lo});
             }
             cut_cpu_words(*p, runs);
+            land_split(cmd, *p, runs);   // (Harpia: the parts on shared pages land on the CPU, three-way)
             if (runs.empty()) continue;
             checkpoint_mark(cmd, p->lo, 'b');
             vkCmdCopyBuffer(cmd, p->mirror, p->buffer, (uint32_t)runs.size(), runs.data());
@@ -2797,6 +2999,23 @@ void memory_end_submission(VkCommandBuffer cmd) {
     // in the mirror and written back; CPU writes collected at the next submission get a newer generation)
     for (Pool* p : mirror_synced) p->synced_gen = gen_now;
     mirror_synced.clear();
+    {   // (Harpia) the landings recorded now: their pages as written back by this submission (the readback and capture waits)
+        std::vector<std::pair<uint64_t, uint64_t>> landed;
+        {
+            std::lock_guard ll(land_mu);
+            for (auto it = landings.rbegin(); it != landings.rend() && it->value == mem_rec_value; ++it)
+                landed.push_back({it->guest_lo, it->guest_hi});
+        }
+        for (const auto& [lo, hi] : landed) wb_pages_note(lo, hi, mem_rec_value);
+        static int64_t subs;
+        if (wb_land_on() && ++subs % 3600 == 0) {
+            std::lock_guard ll(land_mu);
+            logf("vk: write-backs landed on the CPU (3600 submits): %lld parts, %lld bytes written, %lld bytes the CPU had changed "
+                 "kept, %lld copies before without a stage; %zu shared pages", (long long)st_land_parts, (long long)st_land_bytes,
+                 (long long)st_land_kept, (long long)st_land_full, shared_pages.size());
+            st_land_parts = st_land_bytes = st_land_kept = st_land_full = 0;
+        }
+    }
     mirror_upload = false;
 }
 

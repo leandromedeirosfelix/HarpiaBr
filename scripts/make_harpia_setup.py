@@ -25,7 +25,8 @@ MAGIC = b"HARPIAPL"
 GITHUB_LIMIT = 2 * 1024 ** 3   # (one release asset)
 
 # (one line a paragraph: the installer's box wraps them; LICENSE follows as it is)
-NOTICE = """Harpia — Ocarina of Time no PC / on PC
+# (raw: the Windows paths in it keep their backslashes)
+NOTICE = r"""Harpia — Ocarina of Time no PC / on PC
 
 PORTUGUÊS
 O Harpia é software livre (GNU GPL-3.0), baseado no Hookshot e nos projetos que ele credita. É um projeto de fãs, sem nenhuma ligação com a Nintendo. Este instalador traz só o Harpia Builder e suas ferramentas: nenhum arquivo do jogo vem junto. O Builder monta o jogo no seu PC a partir da SUA cópia (.nup) — sem ela, não há jogo.
@@ -39,8 +40,20 @@ Nothing is downloaded or sent, except the optional DLSS step: the Harpia Builder
 NVIDIA's libraries (DLSS / Streamline) are NOT in this installer nor in Harpia's code; the game works without them.
 To build the game the PC needs Microsoft's free Visual Studio Build Tools (C++) and the Windows SDK: the Builder's PC check says if they are missing.
 
-Incluídos, cada um sob a própria licença (os arquivos de licença ficam na pasta de instalação) / Included, each under its own licence (their licence files are in the install folder):
-- .NET runtime (MIT), Python (PSF License), the Emscripten SDK's LLVM/clang (Apache-2.0 with LLVM exceptions), CPM packages (FFmpeg, Vulkan headers, SPIRV headers, Vulkan Memory Allocator: their own licences), wgpu-native (MIT / Apache-2.0), SDL2 (zlib), the Inter font (SIL Open Font License 1.1), NVIDIA Streamline's headers (MIT; headers only, used at build time).
+CÓDIGO-FONTE / SOURCE
+Harpia {tag}: https://github.com/leandromedeirosfelix/HarpiaBr/tree/{tag} (a tag {tag} do repositório). Este instalador e o Harpia Builder foram feitos exatamente desse código; o código-fonte completo está lá. / This installer and the Harpia Builder were built from exactly that source (the repository's tag {tag}); the complete source is there.
+O Harpia é uma versão modificada do Hookshot (github.com/NotRexed/Hookshot), de NotRexed e colaboradores; modificado por Leandro Felix em 2026 (GPL-3.0, seção 5a): veja NOTICE.md. / Harpia is a modified version of Hookshot by NotRexed and contributors, modified by Leandro Felix in 2026 (GPL-3.0 section 5a): see NOTICE.md.
+
+Incluídos, cada um sob a própria licença / Included, each under its own licence. Depois de instalado, os textos ficam em <pasta>\versions\{tag}\HarpiaBuilder / Once installed, the texts are in <folder>\versions\{tag}\HarpiaBuilder:
+- Harpia, Harpia Builder (GPL-3.0): LICENSE; tools\NOTICE.md, tools\CREDITS.md, tools\CREDITS.en.md; tools\LICENSES\ (GPL-2.0-or-later, GPL-3.0-or-later, MIT, BSD-2/3-Clause, Apache-2.0, BSL-1.0, Zlib, CC0-1.0, WTFPL).
+- .NET runtime: MIT, .NET Library License and the Windows SDK License (D3DCompiler_47_cor3.dll): dotnet-LICENSE.TXT, dotnet-THIRD-PARTY-NOTICES.TXT, dotnet-desktop-LICENSE.TXT. D3DCompiler_47_cor3.dll — Microsoft, distributed as part of the .NET Desktop Runtime (WPF); licence: see https://github.com/dotnet/core/blob/main/license-information-windows.md (Windows SDK License).
+- Python (PSF License, tools\python\LICENSE.txt) with capstone (BSD-3-Clause), numpy (BSD-3-Clause), cffi (MIT), lz4 (BSD-3-Clause), zstandard (BSD-3-Clause) and OpenSSL (Apache-2.0): their licence files in tools\python.
+- The Emscripten SDK's LLVM/clang 24.0.0git (510126255f89): Apache-2.0 WITH LLVM-exception, tools\emsdk\upstream\LICENSE.TXT; emsdk: tools\emsdk\LICENSE.
+- FFmpeg (LGPL-2.1-or-later), commit adbaa35 (as its libraries report), tools\cpm\ffmpeg\*\COPYING.LGPLv2.1, its source and configure line in SOURCE.txt; NVIDIA's nv-codec-headers (MIT), nv-codec-headers-MIT.txt. FFmpeg's libraries and headers ship there and the Builder links the game from them: you can build FFmpeg yourself and relink.
+- Vulkan headers, SPIR-V headers (Apache-2.0 / MIT), Vulkan Memory Allocator (MIT): tools\cpm, each with its licence.
+- wgpu-native v29.0.1.1 (MIT / Apache-2.0, unmodified upstream build): tools\wgpu-native\LICENSE.md.
+- SDL2 2.32.10 (zlib): tools\third_party\sdl2. Opus (BSD-3-Clause): tools\third_party\opus. zstd / zbic (BSD-3-Clause option): tools\third_party\zbic. suyu and the a64-kit (GPL-2.0-or-later / GPL-3.0-or-later): tools\gpu\third_party\suyu, tools\third_party\a64-kit. Sirit (BSD-3-Clause; Eden's changes GPL): tools\gpu\vk\sirit. stb (public domain / MIT): tools\third_party\stb.
+- The Inter font (SIL Open Font License 1.1): Fonts\Inter-LICENSE.txt. NVIDIA Streamline's headers (MIT; headers only, used at build time): tools\third_party\streamline\license.txt.
 
 ----------------------------------------------------------------------------------------------------------------------
 """
@@ -110,8 +123,13 @@ def main():
     notice = os.path.join(parts_dir, "NOTICE.txt")
     with open(os.path.join(ROOT, "LICENSE"), encoding="utf-8") as f:
         licence = f.read()
+    commit = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    dirty = subprocess.run(["git", "-C", ROOT, "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True).stdout.strip()
+    if dirty:   # (the release tag must hold exactly the tree this installer is built from: publish is synced to this commit)
+        sys.exit("the checkout has uncommitted changes: commit them first, the release tag must hold this exact tree\n" + dirty)
     with open(notice, "w", encoding="utf-8", newline="\n") as f:
-        f.write(NOTICE + licence)
+        f.write(NOTICE.replace("{tag}", tag) + licence)
+    print("packed from commit %s (tree %s): publish must hold this tree before tag %s" % (commit, subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD^{tree}"], capture_output=True, text=True, check=True).stdout.strip(), tag), flush=True)
     stub = compile_installer(sha256(listing), out)
     # (written under a name that is not an .exe and renamed only once complete and checked: a half-written installer never sits
     # under its final name, where someone could start it)

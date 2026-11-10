@@ -32,6 +32,12 @@ Feito: `LICENSE.zstd`, `PROVENANCE.md` reescrito (zstd.c idêntico ao Atmosphere
 - Incluir os textos de licença do SDL2, Opus, FFmpeg e dav1d junto de qualquer binário embutido; conferir se o FFmpeg usado foi compilado sem `--enable-nonfree`.
 - DLLs do DLSS/Streamline da NVIDIA: **nunca** embutir.
 
+## 4b. Abertos para a v1.0.1 (a v1.0.0 sai sem eles, decisão do coordenador)
+
+- **wgpu-native:** o pacote leva o `LICENSE.md` do wgpu-native (MIT / Apache-2.0, build oficial sem alterações), mas não os avisos das crates Rust que vão dentro da DLL. **Fazer:** gerar a lista de crates e licenças da versão v29.0.1.1 (ex.: `cargo about` no checkout dessa tag) e incluí-la em `tools\wgpu-native`.
+- **dav1d:** créditos e texto de licença (BSD-2-Clause) junto do binário que o usa, conforme o item 4.
+- Feito na v1.0.0: FFmpeg citado pelo commit que as próprias bibliotecas informam (`adbaa35`, `ffversion.h` e `avutil.lib`; o nome da pasta do pacote, `946fcce07b`, é só o rótulo do pacote); `D3DCompiler_47_cor3.dll` nomeado no NOTICE do instalador com o link dos termos da Microsoft.
+
 ## 5. Outros itens de higiene antes de ficar público
 
 - Reavaliar o e-mail do autor nos commits (usar o endereço noreply do GitHub, se preferir).

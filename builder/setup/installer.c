@@ -6,6 +6,7 @@
    adds Start-menu and desktop shortcuts and an entry in Windows' installed apps (current user, no admin), and opens the builder.
    The install folder gets this program without the parts, as HarpiaSetup.exe: "HarpiaSetup.exe --uninstall" removes the install,
    its shortcuts and its entry, and, if the player says so, the builder's build files. Games built with it are never touched.
+   For scripted tests: --no-shortcuts (both shortcut boxes start unticked), --no-launch (the builder is not opened at the end).
    setup.c's checksum, folder and unpacking code is reused (included below, without its own wWinMain).
    --no-launch: the builder is not opened at the end (tests). */
 #define SETUP_NO_MAIN
@@ -766,7 +767,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, LPWSTR cmdline, int show) {
     g_browse = child(L"BUTTON", L("Procurar...", "Browse..."), BS_OWNERDRAW | WS_TABSTOP, 540, 160, 112, 32, ID_BROWSE, inst);
     g_desk = child(L"BUTTON", L("Atalho na área de trabalho", "Desktop shortcut"), BS_OWNERDRAW | WS_TABSTOP, 28, 212, 420, 26, ID_DESK, inst);
     g_menu_box = child(L"BUTTON", L("Atalho no menu Iniciar", "Start menu shortcut"), BS_OWNERDRAW | WS_TABSTOP, 28, 244, 420, 26, ID_MENU, inst);
-    SetWindowLongPtrW(g_desk, GWLP_USERDATA, 1), SetWindowLongPtrW(g_menu_box, GWLP_USERDATA, 1);
+    {   /* (--no-shortcuts, for scripted tests: both boxes start unticked, so a test install leaves nothing on the desktop) */
+        const LONG_PTR on = wcsstr(g_cmdline, L"--no-shortcuts") ? 0 : 1;
+        SetWindowLongPtrW(g_desk, GWLP_USERDATA, on), SetWindowLongPtrW(g_menu_box, GWLP_USERDATA, on);
+    }
     g_note = child(L"STATIC", L"", 0, 28, 292, 624, 90, ID_NOTE, inst);
     /* page 2: progress */
     g_text = child(L"STATIC", L"", 0, 28, 150, 624, 48, 0, inst);

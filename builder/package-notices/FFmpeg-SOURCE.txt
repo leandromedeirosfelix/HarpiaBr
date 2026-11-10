@@ -1,0 +1,28 @@
+FFmpeg in the Harpia Builder (tools/cpm/ffmpeg)
+
+The Harpia Builder ships FFmpeg's static libraries (libavcodec, libavfilter, libavutil, libswresample, libswscale) and
+their headers, unmodified, as a prebuilt package (folder 9.0.2-1790726865-946fcce07b-windows-amd64: a package label). The Builder links
+them into the game it builds on your PC (harpia.exe), for the game's movies.
+
+Licence: GNU Lesser General Public License version 2.1 or later (COPYING.LGPLv2.1 beside this file). It was configured
+without --enable-gpl and without --enable-nonfree. NVIDIA's codec headers it was built with (--enable-ffnvcodec,
+--enable-nvdec) are MIT: nv-codec-headers-MIT.txt beside this file.
+
+Source: FFmpeg commit adbaa35, https://git.ffmpeg.org/ffmpeg.git (mirror https://github.com/FFmpeg/FFmpeg/commit/adbaa35).
+That is what the shipped files themselves say: include/libavutil/ffversion.h defines FFMPEG_VERSION "adbaa35", and
+avutil.lib carries "FFmpeg version adbaa35" (FFmpeg's version.sh writes the git commit it was built from). The
+package folder's name (946fcce07b) is the package's own label, not the FFmpeg source commit. The configure line, as
+recorded in libavutil:
+
+  --disable-avdevice --disable-avformat --disable-doc --disable-everything --disable-ffmpeg --disable-ffprobe
+  --disable-network --enable-static --enable-filter='yadif,scale' --enable-small --enable-pic --enable-swresample
+  --enable-decoder=h264 --enable-decoder=vp8 --enable-decoder=vp9 --enable-decoder=opus --enable-vulkan
+  --enable-hwaccel=h264_vulkan --enable-hwaccel=vp9_vulkan --enable-cuvid --enable-ffnvcodec --enable-nvdec
+  --enable-hwaccel=h264_nvdec --enable-hwaccel=vp8_nvdec --enable-hwaccel=vp9_nvdec --enable-d3d11va --enable-d3d12va
+  --enable-dxva2 --enable-hwaccel=h264_d3d11va --enable-hwaccel=vp9_d3d11va --enable-hwaccel=h264_d3d11va2
+  --enable-hwaccel=vp9_d3d11va2 --enable-hwaccel=h264_d3d12va --enable-hwaccel=vp9_d3d12va --enable-hwaccel=h264_dxva2
+  --enable-hwaccel=vp9_dxva2 --toolchain=msvc --arch=amd64 --target-os=win64
+
+Relinking: the libraries and headers ship in this folder and the Builder links the game from them on your PC, so you can
+build FFmpeg yourself (from that source and configure line, or a changed one) and put your libraries here: the next build
+links the game against them. On request, the maintainers of Harpia give the same source (https://github.com/leandromedeirosfelix/HarpiaBr, its issues).

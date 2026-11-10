@@ -175,6 +175,8 @@ void memory_drop_shadow(uint64_t guest, uint64_t size);   // (a write the captur
 /// (EvilBoyce) the newest submission value whose write-back reaches into [guest, guest + size) (0: none ever); *ever set
 /// when any write-back ever did
 uint64_t memory_writeback_value(uint64_t guest, uint64_t size, bool* ever);
+/// (Harpia) the write-backs landed on the CPU whose submissions are done (<= done), applied in order: before the CPU reads GPU results
+void memory_apply_landings(uint64_t done);
 void memory_note_readback(uint64_t guest, uint64_t size);   // (PR 430) a CPU read of GPU results: see memory_rb_refresh
 bool memory_rb_refresh(VkCommandBuffer up);
 /// (vk_replay.cpp) The GPU's progress on the recordings' timeline, and a wait for it to reach v

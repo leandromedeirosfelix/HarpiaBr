@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <stdexcept>
 #include <cstdio>
 #include <functional>
@@ -819,11 +820,24 @@ void dump_ir(const Program& p, const char* stage, const Shader::IR::Program& pro
 }
 
 /// Translates a program variant's stages into p (on a worker for graphics programs: s and the codes are copies)
+// (Harpia, interim) the tone map's EV where the game leaves it at 0: RX_VK_OOT_EV, default -1.25, 0 = off (oot_visual, disk_init's log)
+float oot_ev() {
+    static const float ev = getenv("RX_VK_OOT_EV") ? (float)atof(getenv("RX_VK_OOT_EV")) : -1.25f;
+    return ev;
+}
+
 // (hookshot) ir_opt/oot_visual_workaround.h, on the game's programs
 void oot_visual(Shader::IR::Program& program, uint64_t key) {
     // (EvilOOT, 11-07: off unless RX_VK_OOT_VISUAL=1. With the foliage culling, the pointer reads and the first GPU work right, the
     // game's own fog is the soft haze with sun shafts of the console's picture at Kokiri's rock; the 0.08 factor was tuned against
     // the white wall those bugs made, and thinned every scene's fog)
+    // (Harpia, interim, from ocarina-recomp 3d85e5a, GPL-3.0) The views' EV the tone map scales its bloom by is never written here (the
+    // setter's caller 0x800994b0 finds no view at component+0x1f8 and the owner byte +0x560 at 0: see ApplyOotToneMapExposure), so
+    // c3[3].z stays 1 and the picture washes out. Where it is 1, exp2(EV) with RX_VK_OOT_EV (default -1.25; 0: the game's 1, as before)
+    const float ev = oot_ev();
+    if (ev != 0.0f && key == 0x73320e720a317817ull)
+        if (const size_t n = Shader::Optimization::ApplyOotToneMapExposure(program, std::exp2(ev)))
+            logf("vk: tone map %016llx: exposure exp2(%g) where the game leaves EV at 0, %zu edits", (unsigned long long)key, ev, n);
     static const bool on = getenv("RX_VK_OOT_VISUAL") && atoi(getenv("RX_VK_OOT_VISUAL")) != 0;
     if (!on) return;
     static const float fog = getenv("RX_VK_OOT_FOG") ? (float)atof(getenv("RX_VK_OOT_FOG")) : 0.08f;   // (0.25, Orchid's, left a white forest once the game no longer lost its start)
@@ -894,6 +908,11 @@ void disk_init() {
     static std::once_flag once;
     std::call_once(once, [] {
         menu_init();   // (local: the Fog option is RX_VK_OOT_VISUAL from here on, in the stamp and in oot_visual)
+        if (oot_ev() != 0.0f)   // (one line a run, whether the tone map comes from the program cache or is translated)
+            logf("vk: tone map exposure interim on: EV %g (x%g) where the game leaves it at 0 (RX_VK_OOT_EV=0: off)", oot_ev(),
+                 std::exp2(oot_ev()));
+        else
+            logf("vk: tone map exposure interim off (RX_VK_OOT_EV=0): the game's own exposure");
         if (getenv("RX_VK_NO_PROGRAM_CACHE")) return;
         char exe[MAX_PATH];
         const DWORD n = game_module_path(exe, MAX_PATH);

@@ -227,7 +227,7 @@
           <Grid Grid.Row="3">
             <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
             <CheckBox x:Name="DlssAccept" Style="{StaticResource Tick}" IsChecked="False" Visibility="Collapsed" VerticalAlignment="Center"
-                      Content="{local:L 'I have read and accept the NVIDIA terms'}" Click="DlssAcceptChanged"/>
+                      Content="{local:L 'I have read and accept the NVIDIA terms'}" Checked="DlssAcceptChanged" Unchecked="DlssAcceptChanged"/>
             <Button x:Name="DlssBack" Grid.Column="1" Style="{StaticResource Quiet}" Margin="0,0,10,0" Content="{local:L 'Back'}" Click="DlssBackClick"/>
             <Button x:Name="DlssGo" Grid.Column="2" Style="{StaticResource Primary}" Click="DlssGoClick"/>
           </Grid>

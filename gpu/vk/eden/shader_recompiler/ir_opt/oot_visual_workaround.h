@@ -62,6 +62,33 @@ inline size_t ApplyOotVisualWorkaround(IR::Program& program, f32 fog_scale, f32 
     return matches.size();
 }
 
+/// (Harpia, interim) The tone map's exposure, c3[3].z = exp2f(EV), as ocarina-recomp 3d85e5a (GPL-3.0) sets it: where the game's
+/// is 1 (EV 0), exposure_when_unset instead. The real cause is that the views' EV is never written on this host: the setter
+/// 0x8360b380 runs only from the component update 0x800994b0, whose two gates stay false (no view at component+0x1f8, owner byte
+/// +0x560 = 0). Each of the three c3+0x38 loads becomes (z == 1 ? exposure_when_unset : z). 0 edits: not the tone map.
+inline size_t ApplyOotToneMapExposure(IR::Program& program, f32 exposure_when_unset) {
+    if (program.stage != Stage::Fragment) return 0;
+    std::vector<std::pair<IR::Block*, IR::Inst*>> loads;
+    for (IR::Block* block : program.blocks) {
+        for (IR::Inst& inst : block->Instructions()) {
+            if (inst.GetOpcode() == IR::Opcode::GetCbufF32 && inst.Arg(0).IsImmediate() && inst.Arg(0).U32() == 3 &&
+                inst.Arg(1).IsImmediate() && inst.Arg(1).U32() == 0x38) {
+                loads.emplace_back(block, &inst);
+            }
+        }
+    }
+    if (loads.size() != 3) return 0;
+    for (const auto& [block, inst] : loads) {
+        const auto insertion = block->Instructions().iterator_to(*inst);
+        const auto original = block->PrependNewInst(insertion, *inst);
+        IR::IREmitter ir{*block, insertion};
+        const IR::F32 z{IR::Value{&*original}};
+        const IR::F32 chosen{ir.Select(ir.FPEqual(z, ir.Imm32(1.0f)), ir.Imm32(exposure_when_unset), z)};
+        inst->ReplaceUsesWith(chosen);
+    }
+    return loads.size();
+}
+
 /// (hookshot) Not a NaN or an infinity into a float colour target. One such pixel in the scene went through the bloom's chain of
 /// averages to the whole picture: the one-frame white flash, the HUD over it (RX_VK_FRAMELOG, RX_VK_PROBE=2 caught it: a NaN in the
 /// scene target, the blur after it all at its top). What the console's blend does with one is unknown; nothing here wants it.

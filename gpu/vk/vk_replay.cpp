@@ -2168,6 +2168,7 @@ void invalidate(uint64_t gpu, uint64_t size) {
                 }
                 w = true;
             }
+            memory_apply_landings(completed());   // (Harpia: write-backs landed on the CPU, in before the game reads)
             if (w) {
                 waited++;
                 const int64_t d = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - w0).count();

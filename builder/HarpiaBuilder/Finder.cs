@@ -116,6 +116,12 @@ static class Finder
         {
             try
             {
+                // (a Harpia.lnk onto another game folder that is still there is the player's: never deleted or pointed here)
+                if (OtherGame(link, gameFolder) is string other)
+                {
+                    if (want) ShortcutError = $"{Path.GetFileName(link)}: kept, it opens {other}";
+                    continue;
+                }
                 if (!want)
                 {
                     if (File.Exists(link)) File.Delete(link);
@@ -141,6 +147,23 @@ static class Finder
 
     /// The last shortcut that could not be made, for the log
     public static string? ShortcutError;
+
+    /// The program a shortcut opens when that is an existing file outside this game folder; null when there is no shortcut, it
+    /// opens this folder's game, or what it opened is gone (then it may be replaced)
+    static string? OtherGame(string link, string gameFolder)
+    {
+        if (!File.Exists(link)) return null;
+        var sl = (IShellLinkW)new ShellLink();
+        ((System.Runtime.InteropServices.ComTypes.IPersistFile)sl).Load(link, 0);
+        var target = new System.Text.StringBuilder(1024);
+        sl.GetPath(target, target.Capacity, IntPtr.Zero, 0);
+        var path = target.ToString();
+        if (path.Length == 0 || !File.Exists(path)) return null;
+        var dir = Path.GetFullPath(Path.GetDirectoryName(path)!).TrimEnd('\\');
+        var game = Path.GetFullPath(gameFolder).TrimEnd('\\');
+        var same = dir.Equals(game, StringComparison.OrdinalIgnoreCase) || dir.Equals(Path.Combine(game, "bin"), StringComparison.OrdinalIgnoreCase);
+        return same ? null : path;
+    }
 
     [System.Runtime.InteropServices.ComImport, System.Runtime.InteropServices.Guid("00021401-0000-0000-C000-000000000046")]
     class ShellLink { }
